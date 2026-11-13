@@ -303,3 +303,6 @@ dialog::backdrop{background:rgb(0 0 0 / .4)}
   @keyframes up{from{transform:translateY(24px);opacity:.6}to{transform:none;opacity:1}}
 }
 @media (max-width:360px){.kpis{grid-template-columns:1fr}.grid{grid-template-columns:1fr}}
+
+.steps a{color:var(--accent);font-weight:600}
+.field input[type=password]{letter-spacing:.05em}

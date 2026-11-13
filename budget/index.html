@@ -240,6 +240,35 @@
       <button class="btn" id="apPaste" type="button">Zahlung aus Zwischenablage einfügen</button>
     </section>
 
+    <section class="card" id="syncBox" aria-labelledby="syncTitle">
+      <h2 id="syncTitle">Auf mehreren Geräten nutzen</h2>
+      <p class="hint">Iphone und Computer gleichen sich automatisch ab. Die Daten werden vorher mit deinem Passwort verschlüsselt, auf GitHub liegt nur unlesbarer Text.</p>
+      <div id="syncOff" class="stack">
+        <details>
+          <summary>So richtest du es ein</summary>
+          <ol class="steps">
+            <li>Öffne <a href="https://github.com/settings/tokens/new?scopes=gist&amp;description=Budget-Sync" target="_blank" rel="noopener">diesen Link</a>. Das Recht «gist» ist schon angekreuzt.</li>
+            <li>Wähl bei «Expiration» <b>«No expiration»</b>, scrolle ganz nach unten und tippe auf <b>«Generate token»</b>.</li>
+            <li>Kopiere den Token (er beginnt mit «ghp_») und füge ihn unten ein.</li>
+            <li>Wähl ein Passwort. Auf dem zweiten Gerät gibst du <b>denselben Token und dasselbe Passwort</b> ein.</li>
+          </ol>
+        </details>
+        <label class="field"><span class="flabel">GitHub-Token</span><input id="syncToken" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ghp_…"></label>
+        <label class="field"><span class="flabel">Passwort zum Verschlüsseln</span><input id="syncPass" type="password" autocomplete="new-password" autocapitalize="off" spellcheck="false"></label>
+        <p class="hint">Merk dir das Passwort. Wer es vergisst, kann die abgeglichenen Daten nicht mehr lesen. Dein Backup bleibt dann der Notausgang.</p>
+        <button class="btn primary" id="syncConnect" type="button">Verbinden</button>
+        <p class="status" id="syncMsgOff" role="status"></p>
+      </div>
+      <div id="syncOn" class="stack" hidden>
+        <p id="syncInfo" class="hint"></p>
+        <p class="status" id="syncStatus" role="status"></p>
+        <div class="btnrow">
+          <button class="btn" id="syncNow" type="button">Jetzt abgleichen</button>
+          <button class="btn danger" id="syncOffBtn" type="button">Sync beenden</button>
+        </div>
+      </div>
+    </section>
+
     <section class="card" aria-labelledby="bakTitle">
       <h2 id="bakTitle">Backup</h2>
       <p class="hint" id="bakInfo">Deine Daten sind nur auf diesem Gerät gespeichert. Mach ab und zu ein Backup, z. B. in iCloud Drive.</p>
@@ -303,6 +332,7 @@
 </dialog>
 
 <div class="tip" id="tip" hidden></div>
+<script src="sync.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
