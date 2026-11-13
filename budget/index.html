@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="de-CH">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Lionels Budget</title>
+<meta name="description" content="Budget von Lohn zu Lohn: Wie viel darf ich heute noch ausgeben?">
+<meta name="theme-color" content="#f3f5f8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f131a" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Budget">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- ===================== HEUTE ===================== -->
+  <main class="view" id="v-heute" aria-labelledby="t-heute">
+    <header class="top">
+      <div>
+        <div class="eyebrow" id="todayDate">Heute</div>
+        <h1 id="t-heute">Budget</h1>
+      </div>
+      <button class="iconbtn" type="button" id="apPasteTop" aria-label="Apple-Pay-Zahlung aus der Zwischenablage einfügen" title="Apple Pay einfügen">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4.5V3.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><path d="M12 9v7M9 13l3 3 3-3"/></svg>
+      </button>
+    </header>
+
+    <div class="notice" id="storeNotice" hidden></div>
+
+    <section class="card ap" id="apBox" aria-labelledby="apTitle" hidden>
+      <h2 class="ap-title" id="apTitle" tabindex="-1"></h2>
+      <div class="ap-amt num" id="apAmt"></div>
+      <div id="apStatus" role="status"></div>
+      <div id="apBody" class="stack"></div>
+    </section>
+
+    <section class="card hero" aria-labelledby="heroLabel">
+      <div class="row between">
+        <span class="hero-label" id="heroLabel">Heute noch frei</span>
+        <span class="pill neutral" id="heroPill">–</span>
+      </div>
+      <div class="big num" id="heroBig">–</div>
+      <p class="hero-sub" id="heroSub"></p>
+      <div class="pace" id="pace">
+        <div class="track" aria-hidden="true"><div class="fill" id="paceFill"></div><div class="marker" id="paceMarker"></div></div>
+        <div class="cap"><span id="paceLeft"></span><span id="paceRight"></span></div>
+      </div>
+      <dl class="facts" id="facts"></dl>
+      <div class="recon" id="recon"></div>
+      <div class="sr-only" id="reconLive" role="status" aria-live="polite"></div>
+    </section>
+
+    <div id="dueBanners" class="stack"></div>
+
+    <section class="card entry" id="entryPanel" aria-labelledby="entryTitle">
+      <div class="row between">
+        <h2 id="entryTitle">Eintragen</h2>
+        <div class="seg" id="modeSeg" role="group" aria-label="Art der Zahlung">
+          <button type="button" data-mode="out" aria-pressed="true">Ausgabe</button>
+          <button type="button" data-mode="in" aria-pressed="false">Einnahme</button>
+        </div>
+      </div>
+      <label class="amount" for="fAmount"><span>CHF</span><input id="fAmount" type="text" inputmode="decimal" autocomplete="off" enterkeyhint="done" placeholder="0.00" aria-label="Betrag in Franken" aria-describedby="entryHint"></label>
+      <p class="hint" id="entryHint">Betrag eingeben, dann Kategorie antippen.</p>
+      <div class="cats" id="cats"></div>
+      <details id="moreBox">
+        <summary id="moreSum"><span>Datum: <b class="day">Heute</b> · Notiz</span></summary>
+        <div class="stack pad-top">
+          <div class="field"><span class="flabel" id="dateLab">Datum</span>
+            <div class="dayrow" role="group" aria-labelledby="dateLab">
+              <button class="chip" type="button" data-day="0" aria-pressed="true">Heute</button>
+              <button class="chip" type="button" data-day="-1" aria-pressed="false">Gestern</button>
+              <input id="fDate" type="date" aria-label="Anderer Tag">
+            </div>
+          </div>
+          <label class="field"><span class="flabel">Notiz</span><input id="fNote" type="text" maxlength="80" placeholder="z. B. Mittagessen Kantine"></label>
+        </div>
+      </details>
+    </section>
+
+    <section class="card" aria-labelledby="todayListTitle">
+      <div class="row between">
+        <h2 id="todayListTitle">Heute eingetragen</h2>
+        <span class="muted small num" id="todaySum"></span>
+      </div>
+      <div id="todayList"></div>
+    </section>
+  </main>
+
+  <!-- ===================== VERLAUF ===================== -->
+  <main class="view" id="v-verlauf" aria-labelledby="t-verlauf" hidden>
+    <header class="top">
+      <div>
+        <div class="eyebrow">Von Lohn zu Lohn</div>
+        <h1 id="t-verlauf">Verlauf</h1>
+      </div>
+    </header>
+    <div class="period card">
+      <button class="iconbtn" id="prevP" type="button" aria-label="Vorherige Periode"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <div class="period-mid">
+        <span class="period-lab" id="periodLabel" aria-live="polite">–</span>
+        <button class="linkbtn small" id="todayP" type="button" hidden>Zur aktuellen Periode</button>
+      </div>
+      <button class="iconbtn" id="nextP" type="button" aria-label="Nächste Periode"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
+    </div>
+
+    <section class="card" aria-label="Zusammenfassung der Periode">
+      <dl class="kpis" id="kpis"></dl>
+      <ul class="insights" id="insights"></ul>
+    </section>
+
+    <section class="card" aria-labelledby="catTitle">
+      <h2 id="catTitle">Nach Kategorie</h2>
+      <div class="bars" id="bars"></div>
+    </section>
+
+    <section class="card" id="anPanel" aria-labelledby="anTitle">
+      <h2 id="anTitle">Analyse</h2>
+      <div class="charts">
+        <figure class="chart" id="chBal"></figure>
+        <figure class="chart" id="chDay"></figure>
+        <details class="tableview" id="chTable"><summary>Zahlen als Tabelle</summary><div class="tablewrap" id="chTableBody"></div></details>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="listTitle">
+      <h2 id="listTitle" tabindex="-1">Alle Zahlungen</h2>
+      <div id="list"></div>
+    </section>
+  </main>
+
+  <!-- ===================== SPARZIEL ===================== -->
+  <main class="view" id="v-sparen" aria-labelledby="t-sparen" hidden>
+    <header class="top">
+      <div>
+        <div class="eyebrow">Sparziel</div>
+        <h1 id="t-sparen">Auto</h1>
+      </div>
+      <span class="pill neutral" id="carPill">Vorschlag</span>
+    </header>
+    <section class="card car" id="carBody" aria-label="Fortschritt"></section>
+    <section class="card">
+      <details id="carEdit">
+        <summary>Sparplan anpassen</summary>
+        <div class="stack pad-top">
+          <label class="field"><span class="flabel">Welches Auto</span><input id="cName" type="text" maxlength="60"></label>
+          <div class="grid">
+            <label class="field"><span class="flabel">Autopreis (CHF)</span><input id="cPrice" type="text" inputmode="decimal"></label>
+            <label class="field"><span class="flabel">Reserve Unterhalt (CHF)</span><input id="cReserve" type="text" inputmode="decimal"></label>
+            <label class="field"><span class="flabel">Schon gespart (CHF)</span><input id="cSaved" type="text" inputmode="decimal"></label>
+            <label class="field"><span class="flabel">Lehrbeginn</span><input id="cStart" type="month"></label>
+          </div>
+          <h3 class="sub">Pro Lehrjahr</h3>
+          <div class="grid">
+            <label class="field"><span class="flabel">Lohn 1. Jahr</span><input id="cW0" type="text" inputmode="decimal"></label>
+            <label class="field"><span class="flabel">Sparen 1. Jahr</span><input id="cR0" type="text" inputmode="decimal"></label>
+            <label class="field"><span class="flabel">Lohn 2. Jahr</span><input id="cW1" type="text" inputmode="decimal"></label>
+            <label class="field"><span class="flabel">Sparen 2. Jahr</span><input id="cR1" type="text" inputmode="decimal"></label>
+            <label class="field"><span class="flabel">Lohn 3. Jahr</span><input id="cW2" type="text" inputmode="decimal"></label>
+            <label class="field"><span class="flabel">Sparen 3. Jahr</span><input id="cR2" type="text" inputmode="decimal"></label>
+          </div>
+          <button class="btn primary" id="cSave" type="button">Sparplan speichern</button>
+          <p class="status" id="cMsg" role="status"></p>
+        </div>
+      </details>
+    </section>
+  </main>
+
+  <!-- ===================== MEHR ===================== -->
+  <main class="view" id="v-mehr" aria-labelledby="t-mehr" hidden>
+    <header class="top">
+      <div>
+        <div class="eyebrow">Einstellungen</div>
+        <h1 id="t-mehr">Mehr</h1>
+      </div>
+    </header>
+
+    <section class="card" aria-labelledby="sTitle">
+      <h2 id="sTitle">Budget</h2>
+      <p class="hint">Der Kontostand wird ab dem Startdatum aus deinen Einträgen berechnet. Die Limits gelten für jede Periode vom Lohntag bis zum Tag davor.</p>
+      <div class="grid">
+        <label class="field"><span class="flabel">Kontostand am Morgen (CHF)</span><input id="sBal" type="text" inputmode="decimal"></label>
+        <label class="field"><span class="flabel">an diesem Datum</span><input id="sDate" type="date"></label>
+        <label class="field"><span class="flabel">Lohn netto (CHF)</span><input id="sInc" type="text" inputmode="decimal"></label>
+        <label class="field"><span class="flabel">Lohntag im Monat</span><input id="sDay" type="number" inputmode="numeric" min="1" max="28" step="1"></label>
+        <label class="field span2"><span class="flabel">Ziel: Kontostand direkt nach dem Lohn (CHF)</span><input id="sGoal" type="text" inputmode="decimal"></label>
+      </div>
+      <h3 class="sub">Limits pro Periode</h3>
+      <div class="grid" id="limitFields"></div>
+      <button class="btn primary" id="saveSettings" type="button">Speichern</button>
+      <p class="status" id="setMsg" role="status"></p>
+    </section>
+
+    <section class="card" aria-labelledby="recTitle">
+      <h2 id="recTitle">Feste Zahlungen</h2>
+      <p class="hint">Zahlungen, die jeden Monat kommen (Handy-Abo, Versicherung). Die App erinnert dich auf «Heute», sobald sie fällig sind, und du trägst sie mit einem Tipp ein.</p>
+      <div id="recList" class="stack"></div>
+      <div class="grid rec-add">
+        <label class="field span2"><span class="flabel">Name</span><input id="rName" type="text" maxlength="40" placeholder="z. B. Swisscom Abo"></label>
+        <label class="field"><span class="flabel">Betrag (CHF)</span><input id="rAmt" type="text" inputmode="decimal" placeholder="26.95"></label>
+        <label class="field"><span class="flabel">Fällig am</span><input id="rDay" type="number" inputmode="numeric" min="1" max="28" placeholder="26"></label>
+      </div>
+      <button class="btn" id="rAdd" type="button">Feste Zahlung hinzufügen</button>
+      <p class="status" id="rMsg" role="status"></p>
+    </section>
+
+    <section class="card" aria-labelledby="merTitle">
+      <h2 id="merTitle">Gemerkte Läden</h2>
+      <p class="hint">Wenn du einer Apple-Pay-Zahlung eine Kategorie gibst, merkt sich die App den Laden. Beim nächsten Mal ordnet sie ihn automatisch ein.</p>
+      <div id="merList"></div>
+    </section>
+
+    <section class="card" aria-labelledby="apTitle2">
+      <h2 id="apTitle2">Apple Pay</h2>
+      <p class="hint">Nach jeder Zahlung legt ein Kurzbefehl die Zahlung in die Zwischenablage. In der App tippst du dann oben rechts auf das Einfügen-Symbol.</p>
+      <details>
+        <summary>So richtest du den Kurzbefehl ein</summary>
+        <ol class="steps">
+          <li>Öffne die App <b>Kurzbefehle</b> → <b>Automation</b> → <b>+</b> → <b>Wallet</b>.</li>
+          <li>Wähle deine Karte, «Sofort ausführen» einschalten.</li>
+          <li>Aktion <b>Text</b> hinzufügen mit diesem Inhalt:<br><code class="copy" id="apTemplate">ap-[Aktuelles Datum]-[Betrag]-[Händler]</code><br>Beim Datum «Eigenes Format» wählen: <code>yyyyMMddHHmmss</code>.</li>
+          <li>Aktion <b>In Zwischenablage kopieren</b> hinzufügen.</li>
+          <li>Optional: Aktion <b>Mitteilung zeigen</b> «Zahlung kopiert, Budget öffnen».</li>
+        </ol>
+        <p class="hint">Mehrere Zahlungen auf einmal gehen auch: eine pro Zeile.</p>
+      </details>
+      <button class="btn" id="apPaste" type="button">Zahlung aus Zwischenablage einfügen</button>
+    </section>
+
+    <section class="card" aria-labelledby="bakTitle">
+      <h2 id="bakTitle">Backup</h2>
+      <p class="hint" id="bakInfo">Deine Daten sind nur auf diesem Gerät gespeichert. Mach ab und zu ein Backup, z. B. in iCloud Drive.</p>
+      <div class="btnrow">
+        <button class="btn" id="bakExport" type="button">Backup speichern</button>
+        <label class="btn filebtn">Backup laden<input id="bakImport" type="file" accept="application/json,.json"></label>
+      </div>
+      <p class="status" id="bakMsg" role="status"></p>
+    </section>
+
+    <section class="card" aria-labelledby="dangerTitle">
+      <h2 id="dangerTitle">Alles löschen</h2>
+      <p class="hint">Löscht alle Zahlungen und Einstellungen auf diesem Gerät. Mach vorher ein Backup.</p>
+      <button class="btn danger" id="resetAll" type="button">Alle Daten löschen</button>
+    </section>
+
+    <p class="foot muted small">Lionels Budget · <span id="appVersion"></span></p>
+  </main>
+
+  <div class="toast-wrap" aria-live="polite"><div id="toast" class="toast" hidden></div></div>
+
+  <nav class="tabbar" aria-label="Hauptnavigation">
+    <button type="button" data-tab="heute" aria-current="page">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v4.5l3 2"/></svg><span>Heute</span>
+    </button>
+    <button type="button" data-tab="verlauf">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h16M8 15l3.5-4 3 2.5L20 7"/></svg><span>Verlauf</span>
+    </button>
+    <button type="button" data-tab="sparen">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 15.5l1.6-4.7A2 2 0 0 1 8.5 9.5h7a2 2 0 0 1 1.9 1.3l1.6 4.7"/><rect x="3.5" y="15" width="17" height="4" rx="1.5"/><path d="M6.5 19v1.5M17.5 19v1.5"/></svg><span>Sparziel</span>
+    </button>
+    <button type="button" data-tab="mehr">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8"/></svg><span>Mehr</span>
+    </button>
+  </nav>
+</div>
+
+<!-- Bearbeiten -->
+<dialog id="editDlg" aria-labelledby="editTitle">
+  <form method="dialog" class="sheet" id="editForm">
+    <div class="row between">
+      <h2 id="editTitle">Zahlung bearbeiten</h2>
+      <button class="iconbtn" value="cancel" type="submit" aria-label="Schliessen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="seg" id="eModeSeg" role="group" aria-label="Art der Zahlung">
+      <button type="button" data-mode="out" aria-pressed="true">Ausgabe</button>
+      <button type="button" data-mode="in" aria-pressed="false">Einnahme</button>
+    </div>
+    <label class="amount" for="eAmount"><span>CHF</span><input id="eAmount" type="text" inputmode="decimal" autocomplete="off" aria-label="Betrag in Franken"></label>
+    <div class="field"><span class="flabel" id="eCatLab">Kategorie</span><div class="chips" id="eCats" role="group" aria-labelledby="eCatLab"></div></div>
+    <div class="grid">
+      <label class="field"><span class="flabel">Datum</span><input id="eDate" type="date"></label>
+      <label class="field"><span class="flabel">Notiz</span><input id="eNote" type="text" maxlength="80"></label>
+    </div>
+    <p class="status err" id="eMsg" role="status"></p>
+    <div class="row between">
+      <button class="btn danger" type="button" id="eDel">Löschen</button>
+      <button class="btn primary" type="button" id="eSave">Speichern</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="tip" id="tip" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
