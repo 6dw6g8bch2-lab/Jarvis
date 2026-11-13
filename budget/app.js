@@ -1,6 +1,6 @@
 "use strict";
 /* Lionels Budget – läuft komplett im Browser, Daten liegen in localStorage auf dem Gerät. */
-const APP_VERSION = "2.3.0";
+const APP_VERSION = "3.0.0";
 const STORE_KEY = "lionel-budget-v1";
 const EARLY_PAY_DAYS = 7, MIN_TEMPO_DAYS = 5, GOOD_MARGIN = 20, WARN_SHARE = .8, PACE_TOL = .05, BACKUP_REMIND_DAYS = 7;
 
@@ -55,7 +55,7 @@ const isDate = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v));
 /* ---------- Speicher ---------- */
 const DEF_SETTINGS = {startBalance:0, startDate:todayIso(), goal:0, income:0, payday:25, limits:{}, recurring:[], skips:{}};
 const CAR_DEF = {name:"Occasion, z. B. Mazda MX-5 oder Suzuki Swift Sport", price:8000, reserve:2000, saved:0, start:"2026-08", wages:[850,1050,1584], rates:[100,350,700], inBudget:true};
-let S = structuredClone(DEF_SETTINGS), P = [], C = structuredClone(CAR_DEF), carStored = false, M = {}, apSeen = new Set(), lastBackup = 0, storeOk = true;
+let S = structuredClone(DEF_SETTINGS), P = [], C = structuredClone(CAR_DEF), carStored = false, M = {}, apSeen = new Set(), lastBackup = 0, storeOk = true, T = {};
 
 function catId(v, type) {
   const t = String(v || "").trim().toLowerCase();
@@ -72,6 +72,7 @@ function cleanPayment(p) {
   const amount = +p.amount, type = p.type === "in" ? "in" : p.type === "out" ? "out" : null;
   if (!(amount > 0) || !type || !isDate(p.date)) return null;
   const o = {id:String(p.id || uid()), amount:r2(amount), type, category:catId(p.category, type), date:p.date, note:String(p.note || "").slice(0, 80), createdAt:+p.createdAt || Date.now()};
+  o.ts = +p.ts || o.createdAt; // letzte Änderung, für den Abgleich zwischen Geräten
   if (p.source) o.source = String(p.source);
   if (p.merchant) o.merchant = String(p.merchant).slice(0, 60);
   if (p.rid) o.rid = String(p.rid);
@@ -89,12 +90,13 @@ function cleanSettings(b) {
     limits:Object.fromEntries(Object.entries(b.limits || {}).filter(([k, v]) => OUT.some(c => c.id === k) && +v > 0).map(([k, v]) => [k, +v])),
     recurring:Array.isArray(b.recurring) ? b.recurring.filter(r => r && r.name && +r.amount > 0).map(r => ({id:String(r.id || uid()), name:String(r.name).slice(0, 40), amount:r2(+r.amount), day:Math.min(Math.max(Math.round(+r.day || 1), 1), 28)})) : [],
     skips:b.skips && typeof b.skips === "object" ? {...b.skips} : {},
+    ts:+b.ts || 0,
   };
 }
 function cleanCar(c) {
   const arr = (a, d) => Array.isArray(a) && a.length === 3 ? a.map(x => +x || 0) : [...d];
   return {name:String(c.name || CAR_DEF.name), price:+c.price || 0, reserve:+c.reserve || 0, saved:+c.saved || 0,
-    start:/^\d{4}-\d{2}$/.test(String(c.start)) ? c.start : CAR_DEF.start, wages:arr(c.wages, CAR_DEF.wages), rates:arr(c.rates, CAR_DEF.rates), inBudget:c.inBudget === true};
+    start:/^\d{4}-\d{2}$/.test(String(c.start)) ? c.start : CAR_DEF.start, wages:arr(c.wages, CAR_DEF.wages), rates:arr(c.rates, CAR_DEF.rates), inBudget:c.inBudget === true, ts:+c.ts || 0};
 }
 function applyData(d) {
   S = cleanSettings(d.settings);
@@ -105,16 +107,25 @@ function applyData(d) {
   apSeen = new Set(Array.isArray(d.apSeen) ? d.apSeen.map(String) : []);
   P.forEach(p => { if (p.source === "applepay") apSeen.add(p.id); });
   lastBackup = +d.lastBackup || 0;
+  // Daten ohne Zeitstempel (ältere Version, Backup) gelten als älter als jede neue Änderung, aber als neuer als leere Standardwerte
+  if (!S.ts && (S.startBalance || S.income || S.goal || Object.keys(S.limits).length || S.recurring.length)) S.ts = 1;
+  if (carStored && !C.ts) C.ts = 1;
+  T = d.del && typeof d.del === "object" ? Object.fromEntries(Object.entries(d.del).filter(([, v]) => +v > 0).map(([k, v]) => [k, +v])) : {};
 }
+// Gelöschte Zahlungen merkt sich die App 90 Tage, damit andere Geräte sie auch löschen
+function pruneT() { const lim = Date.now() - 90 * 864e5; T = Object.fromEntries(Object.entries(T).filter(([, v]) => v > lim)); return T; }
+const touch = (p) => ({...p, ts:Date.now()});
+function dropPayment(id) { P = P.filter(x => x.id !== id); T[id] = Date.now(); }
+function restorePayment(p) { delete T[p.id]; P = [...P.filter(x => x.id !== p.id), touch(p)]; }
 function snapshot() {
-  return {app:"lionels-budget", v:1, exportedAt:new Date().toISOString(), settings:S, payments:P, car:carStored ? C : null, merchants:M, apSeen:[...apSeen], lastBackup};
+  return {app:"lionels-budget", v:1, exportedAt:new Date().toISOString(), settings:S, payments:P, car:carStored ? C : null, merchants:M, apSeen:[...apSeen], lastBackup, del:pruneT()};
 }
 function load() {
   try { const raw = localStorage.getItem(STORE_KEY); if (raw) applyData(JSON.parse(raw)); }
   catch { storeOk = false; }
 }
-function save() {
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(snapshot())); storeOk = true; return true; }
+function save({sync = true} = {}) {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(snapshot())); storeOk = true; if (sync && typeof scheduleSync === "function") scheduleSync(); return true; }
   catch { storeOk = false; showNotice(); toast("Speichern hat nicht geklappt. Ist der Speicher voll oder der private Modus an?", {err:true}); return false; }
 }
 
@@ -202,7 +213,7 @@ function addEntry(e, {quiet=false, refill=true} = {}) {
     const t = todayIso(), when = p.date === t ? "" : p.date === addDays(t, -1) ? " für gestern" : ` für den ${fmtDay(p.date)}`;
     const free = heroToday !== null && p.date >= periodOf(t).start ? ` Heute noch frei: ${chf(heroToday)}.` : "";
     toast(`${esc(LABEL[p.category])} ${esc(chf(p.amount))}${esc(when)} eingetragen.${esc(free)}`, {undo:() => {
-      P = P.filter(x => x.id !== p.id); save(); renderAll();
+      dropPayment(p.id); save(); renderAll();
       if (refill && !e.rid && !e.source) { $("fAmount").value = p.amount.toFixed(2); $("fNote").value = p.note; $("fDate").value = p.date; mode = p.type; syncDayChips(); renderAll(); }
       toast("Eintrag rückgängig gemacht.");
     }});
@@ -211,10 +222,10 @@ function addEntry(e, {quiet=false, refill=true} = {}) {
 }
 function removeEntry(id) {
   const p = P.find(x => x.id === id); if (!p) return;
-  P = P.filter(x => x.id !== id);
+  dropPayment(id);
   if (id === reconUndoId) { reconNote = ""; reconUndoId = null; }
   save(); renderAll();
-  toast("Zahlung gelöscht.", {undo:() => { P = [...P, p]; save(); renderAll(); toast("Wiederhergestellt."); }});
+  toast("Zahlung gelöscht.", {undo:() => { restorePayment(p); save(); renderAll(); toast("Wiederhergestellt."); }});
 }
 
 /* ---------- Render: Heute ---------- */
@@ -308,7 +319,7 @@ function renderRecon() {
       ? `<div class="note"><span>${esc(reconNote)}</span>${reconUndoId ? `<button class="linkbtn" type="button" id="reconUndo">Rückgängig</button>` : ""}</div>`
       : `<button class="linkbtn" type="button" id="reconOpen">Mit Bank-App abgleichen</button>`;
     const o = $("reconOpen"); if (o) o.onclick = () => { reconOpen = true; reconDraft = ""; reconConfirm = null; renderRecon(); $("reconAmt").focus(); };
-    const u = $("reconUndo"); if (u) u.onclick = () => { P = P.filter(x => x.id !== reconUndoId); save(); reconNote = ""; reconUndoId = null; renderAll(); reconSay("Abgleich rückgängig gemacht."); $("reconOpen")?.focus(); };
+    const u = $("reconUndo"); if (u) u.onclick = () => { dropPayment(reconUndoId); save(); reconNote = ""; reconUndoId = null; renderAll(); reconSay("Abgleich rückgängig gemacht."); $("reconOpen")?.focus(); };
     return;
   }
   const hadFocus = document.activeElement && document.activeElement.id === "reconAmt";
@@ -627,7 +638,7 @@ function renderCar() {
   const add = $("cAdd");
   if (add) add.onclick = () => { addEntry({amount:sv.rest, type:"out", category:SAVE.id, date:todayIso(), note:""}, {refill:false}); const h = $("t-sparen"); h.setAttribute("tabindex", "-1"); h.focus({preventScroll:true}); };
   const adopt = $("cAdopt");
-  if (adopt) adopt.onclick = () => { carStored = true; save(); renderAll(); fillCar();
+  if (adopt) adopt.onclick = () => { carStored = true; C.ts = Date.now(); save(); renderAll(); fillCar();
     toast(sv.rest > 0 ? `Plan übernommen. Dein Tagesbudget ist jetzt CHF ${amt(heroToday ?? 0)}, weil CHF ${amt(sv.rest)} bis zum Lohn zurückgelegt werden.` : "Plan übernommen.", {undo:() => { carStored = false; save(); renderAll(); }}); };
 }
 function fillCar() {
@@ -832,8 +843,8 @@ function bind() {
     if (b.hasAttribute("data-lohn")) addEntry({amount:S.income, type:"in", category:"lohn", date:isDate(b.dataset.lohn) ? b.dataset.lohn : per.start, note:""});
     else if (b.dataset.save) addEntry({amount:+b.dataset.save, type:"out", category:SAVE.id, date:todayIso(), note:""}, {refill:false});
     else if (b.dataset.rec) { const r = S.recurring.find(x => x.id === b.dataset.rec); if (r) addEntry({amount:r.amount, type:"out", category:"handy", date:dueDate(per, r.day), note:r.name, rid:r.id}); }
-    else if (b.dataset.skip) { const key = b.dataset.skip + ":" + per.start; S.skips[key] = true; save(); renderAll();
-      toast("Für diese Periode ausgeblendet.", {undo:() => { delete S.skips[key]; save(); renderAll(); }}); }
+    else if (b.dataset.skip) { const key = b.dataset.skip + ":" + per.start; S.skips[key] = true; S.ts = Date.now(); save(); renderAll();
+      toast("Für diese Periode ausgeblendet.", {undo:() => { delete S.skips[key]; S.ts = Date.now(); save(); renderAll(); }}); }
     const h = $("todayListTitle"); h.focus({preventScroll:true});
   });
 
@@ -848,8 +859,8 @@ function bind() {
     const old = P.find(x => x.id === editId); if (!old) { closeEdit(); return; }
     const upd = {...old, amount, date, type:editMode, category:$("eCats").dataset.sel, note:$("eNote").value.trim().slice(0, 80)}; delete upd.needsCat;
     if (old.merchant && upd.type === "out" && upd.category !== old.category && OUT.some(c => c.id === upd.category)) M[merchKey(old.merchant)] = upd.category;
-    P = P.map(x => x.id === editId ? upd : x); save(); closeEdit(); renderAll(); refocus(old.id);
-    toast("Gespeichert.", {undo:() => { P = P.map(x => x.id === old.id ? old : x); save(); renderAll(); }});
+    P = P.map(x => x.id === editId ? touch(upd) : x); save(); closeEdit(); renderAll(); refocus(old.id);
+    toast("Gespeichert.", {undo:() => { P = P.map(x => x.id === old.id ? touch(old) : x); save(); renderAll(); }});
   };
   $("eDel").onclick = () => { const id = editId; closeEdit(); removeEntry(id); const h = tab === "verlauf" ? $("listTitle") : $("todayListTitle"); h.setAttribute("tabindex", "-1"); h.focus({preventScroll:true}); };
   $("editDlg").addEventListener("cancel", () => setTimeout(() => refocus(editId), 0));
@@ -877,14 +888,14 @@ function bind() {
     if (b.hasAttribute("data-apclose")) { apState = null; renderAp(); $("heroLabel").scrollIntoView({block:"start"}); return; }
     if (b.dataset.apcat) {
       const c = b.dataset.apcat, p = P.find(x => x.id === apState.id); if (!p) return;
-      P = P.map(x => x.id === p.id ? (({needsCat, ...r}) => ({...r, category:c}))(x) : x);
+      P = P.map(x => x.id === p.id ? (({needsCat, ...r}) => ({...r, category:c, ts:Date.now()}))(x) : x);
       if (p.merchant) M[merchKey(p.merchant)] = c;
       save(); apState = {...apState, unknown:false, dup:false}; renderAll();
       toast(`Als ${esc((OUT.find(o => o.id === c) || {}).short)} gespeichert.${p.merchant ? " Laden gemerkt." : ""}`);
       return;
     }
-    if (b.hasAttribute("data-apdel")) { const id = apState.id, old = P.find(x => x.id === id); P = P.filter(x => x.id !== id); save(); apState = null; renderAll();
-      toast("Zahlung gelöscht.", {undo:() => { if (old) { P = [...P, old]; save(); apState = {id}; renderAll(); } }}); $("heroLabel").scrollIntoView({block:"start"}); }
+    if (b.hasAttribute("data-apdel")) { const id = apState.id, old = P.find(x => x.id === id); dropPayment(id); save(); apState = null; renderAll();
+      toast("Zahlung gelöscht.", {undo:() => { if (old) { restorePayment(old); save(); apState = {id}; renderAll(); } }}); $("heroLabel").scrollIntoView({block:"start"}); }
   });
   window.addEventListener("hashchange", () => { if (/#ap/i.test(location.hash)) { const h = location.hash; clearHash(); handleApText(h, {fromHash:true}); } });
 
@@ -895,7 +906,7 @@ function bind() {
     const num = id => { const v = $(id).value.trim(); return v === "" ? 0 : parseAmt(v); };
     const bad = ["cPrice","cReserve","cSaved","cW0","cW1","cW2","cR0","cR1","cR2"].find(id => Number.isNaN(num(id)));
     if (bad) { const f = $(bad); f.setAttribute("aria-invalid", "true"); f.focus(); m.className = "status err"; m.textContent = `«${f.previousElementSibling.textContent}» ist keine Zahl. Beispiel: 350`; return; }
-    C = {name:$("cName").value.trim() || CAR_DEF.name, price:num("cPrice"), reserve:num("cReserve"), saved:$("cSaved").value.trim() === $("cSaved").dataset.shown ? C.saved : r2(num("cSaved") - savedPays()), inBudget:$("cInBudget").checked, start:/^\d{4}-\d{2}$/.test($("cStart").value) ? $("cStart").value : CAR_DEF.start,
+    C = {name:$("cName").value.trim() || CAR_DEF.name, price:num("cPrice"), reserve:num("cReserve"), saved:$("cSaved").value.trim() === $("cSaved").dataset.shown ? C.saved : r2(num("cSaved") - savedPays()), inBudget:$("cInBudget").checked, ts:Date.now(), start:/^\d{4}-\d{2}$/.test($("cStart").value) ? $("cStart").value : CAR_DEF.start,
       wages:[0, 1, 2].map(i => num("cW" + i)), rates:[0, 1, 2].map(i => num("cR" + i))};
     carStored = true; save(); renderAll(); $("carEdit").open = false; $("carEdit").querySelector("summary").focus(); toast("Sparplan gespeichert.");
   };
@@ -914,6 +925,7 @@ function bind() {
     const day = Math.min(Math.max(Math.round(+$("sDay").value || 25), 1), 28);
     const dayChanged = day !== S.payday;
     S = {...S, ...vals, startDate:isDate($("sDate").value) ? $("sDate").value : todayIso(), payday:day, limits};
+    S.ts = Date.now();
     if (dayChanged) viewStart = null;
     if (save()) { m.className = "status ok"; m.textContent = "Gespeichert."; setTimeout(() => { m.textContent = ""; }, 3000); }
     renderAll();
@@ -924,13 +936,13 @@ function bind() {
     if (!name) { m.textContent = "Gib der Zahlung einen Namen."; $("rName").focus(); return; }
     if (!(amount > 0)) { m.textContent = "Betrag nicht erkannt. Beispiel: 26.95"; $("rAmt").focus(); return; }
     if (!(day >= 1 && day <= 28)) { m.textContent = "Tag zwischen 1 und 28 eingeben."; $("rDay").focus(); return; }
-    S.recurring = [...S.recurring, {id:uid(), name, amount, day}]; save();
+    S.recurring = [...S.recurring, {id:uid(), name, amount, day}]; S.ts = Date.now(); save();
     $("rName").value = ""; $("rAmt").value = ""; $("rDay").value = ""; m.className = "status ok"; m.textContent = `${name} hinzugefügt.`;
     renderAll(); renderRecurring();
   };
   $("recList").addEventListener("click", e => { const b = e.target.closest("[data-rmrec]"); if (!b) return;
-    const r = S.recurring.find(x => x.id === b.dataset.rmrec); S.recurring = S.recurring.filter(x => x.id !== b.dataset.rmrec); save(); renderAll(); renderRecurring();
-    toast(`${esc(r.name)} entfernt.`, {undo:() => { S.recurring = [...S.recurring, r]; save(); renderAll(); renderRecurring(); }}); });
+    const r = S.recurring.find(x => x.id === b.dataset.rmrec); S.recurring = S.recurring.filter(x => x.id !== b.dataset.rmrec); S.ts = Date.now(); save(); renderAll(); renderRecurring();
+    toast(`${esc(r.name)} entfernt.`, {undo:() => { S.recurring = [...S.recurring, r]; S.ts = Date.now(); save(); renderAll(); renderRecurring(); }}); });
   $("merList").addEventListener("click", e => { const b = e.target.closest("[data-rmmer]"); if (!b) return; delete M[b.dataset.rmmer]; save(); renderMerchants(); });
 
   // Backup
@@ -955,7 +967,7 @@ function bind() {
     const when = d.exportedAt ? new Date(d.exportedAt).toLocaleDateString("de-CH") : "unbekannt";
     if (!confirm(`Backup vom ${when} mit ${d.payments.length} Zahlungen laden?\n\nDas ersetzt alle Daten auf diesem Gerät.`)) return;
     const before = snapshot();
-    applyData(d); if (!lastBackup) lastBackup = Date.now();
+    applyData(d); if (!lastBackup) lastBackup = Date.now(); S.ts = Date.now(); if (carStored) C.ts = Date.now();
     if (!save()) { applyData(before); m.textContent = "Laden hat nicht geklappt."; return; }
     viewStart = null; fillSettings(); fillCar(); renderAll(); renderMehr();
     m.className = "status ok"; m.textContent = `Backup geladen: ${P.length} Zahlungen.`;
@@ -963,7 +975,7 @@ function bind() {
   $("resetAll").onclick = () => {
     if (!confirm("Wirklich alle Zahlungen und Einstellungen auf diesem Gerät löschen?")) return;
     if (!confirm("Sicher? Das kann nicht rückgängig gemacht werden.")) return;
-    applyData({}); save(); viewStart = null; fillSettings(); fillCar(); renderAll(); renderMehr(); switchTab("heute"); toast("Alle Daten gelöscht.");
+    const gone = P.map(p => p.id), tsNow = Date.now(); applyData({}); gone.forEach(id => { T[id] = tsNow; }); S.ts = tsNow; save(); viewStart = null; fillSettings(); fillCar(); renderAll(); renderMehr(); switchTab("heute"); toast("Alle Daten gelöscht.");
   };
 
   // Tageswechsel, App wieder geöffnet
@@ -988,5 +1000,6 @@ if (/#ap/i.test(location.hash)) { const h = location.hash; clearHash();
   // Auf dem iPhone hat Safari einen eigenen Speicher. Die Zahlung käme sonst nicht in der App an.
   if (standalone || !/iPhone|iPad/.test(navigator.userAgent)) handleApText(h, {fromHash:true});
   else toast("Safari speichert getrennt von der App. Nutze für Apple Pay den Weg über die Zwischenablage.", {err:true, ms:9000}); }
+if (typeof syncInit === "function") syncInit();
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
