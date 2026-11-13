@@ -108,6 +108,12 @@ p{margin:0}
 .pace .fill{position:absolute;inset:0 auto 0 0;border-radius:5px;background:var(--accent);width:0}
 .pace .marker{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--fg);border-radius:1px;left:0}
 .pace .cap{display:flex;flex-wrap:wrap;justify-content:space-between;gap:2px 12px;font-size:.84rem;color:var(--muted)}
+.hero-more>summary{font-weight:500;font-size:.95rem;gap:8px;border-top:1px solid color-mix(in srgb,var(--fg) 10%,transparent);margin-top:2px;padding-top:2px}
+.hero-more>summary span{color:var(--muted)}
+.hero-more>summary b{margin-left:auto;font-weight:650}
+.hero-more>summary::after{margin-left:2px}
+.hero-more>.stack{padding-top:8px}
+.hero-more .facts>div:first-child{border-top:0}
 .facts{display:grid;margin:0}
 .facts>div{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid color-mix(in srgb,var(--fg) 10%,transparent)}
 .facts dt{color:var(--muted);font-size:.92rem}
@@ -149,6 +155,7 @@ p{margin:0}
 .cat b{font-weight:650;font-size:.95rem;overflow-wrap:anywhere}
 .cat small{font-size:.78rem;color:var(--muted);font-family:var(--f-num)}
 .cat small.bad{color:var(--bad)}
+.cat small.good{color:var(--good)}
 .cat small.none{font-family:var(--f-body)}
 .entry.income .cat{border-color:color-mix(in srgb,var(--good) 45%,transparent)}
 details>summary{cursor:pointer;min-height:44px;display:flex;align-items:center;gap:10px;list-style:none;font-weight:600;font-size:.95rem}
@@ -243,6 +250,11 @@ td{font-family:var(--f-num);font-variant-numeric:tabular-nums}
 .car td,.car th{padding:7px 4px}
 .car .facts>div{border-color:var(--line)}
 .car .note{font-size:.85rem;color:var(--muted)}
+.cta{display:grid;gap:10px;background:var(--accent-soft);border-radius:12px;padding:12px 14px;font-size:.92rem}
+.cta.done{background:var(--good-soft);color:var(--good)}
+.cta .btn{justify-self:start}
+.check{display:flex;align-items:center;gap:10px;min-height:44px;font-size:.95rem;cursor:pointer}
+.check input{width:22px;height:22px;accent-color:var(--accent);flex:0 0 auto}
 
 /* ---------- Apple Pay Karte ---------- */
 .ap{border:1.5px solid var(--accent);gap:8px}

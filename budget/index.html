@@ -45,16 +45,20 @@
       </div>
       <div class="big num" id="heroBig">–</div>
       <p class="hero-sub" id="heroSub"></p>
-      <div class="pace" id="pace">
-        <div class="track" aria-hidden="true"><div class="fill" id="paceFill"></div><div class="marker" id="paceMarker"></div></div>
-        <div class="cap"><span id="paceLeft"></span><span id="paceRight"></span></div>
-      </div>
-      <dl class="facts" id="facts"></dl>
-      <div class="recon" id="recon"></div>
+      <details class="hero-more" id="heroMore">
+        <summary><span>Kontostand</span><b class="num" id="heroBalSum">–</b></summary>
+        <div class="stack">
+          <div class="pace" id="pace">
+            <div class="track" aria-hidden="true"><div class="fill" id="paceFill"></div><div class="marker" id="paceMarker"></div></div>
+            <div class="cap"><span id="paceLeft"></span><span id="paceRight"></span></div>
+          </div>
+          <dl class="facts" id="facts"></dl>
+          <div class="recon" id="recon"></div>
+        </div>
+      </details>
       <div class="sr-only" id="reconLive" role="status" aria-live="polite"></div>
     </section>
 
-    <div class="notice" id="storeNotice" hidden></div>
     <div id="dueBanners" class="stack"></div>
 
     <section class="card entry" id="entryPanel" aria-labelledby="entryTitle">
@@ -82,6 +86,8 @@
         </div>
       </details>
     </section>
+
+    <div class="notice" id="storeNotice" hidden></div>
 
     <section class="card" aria-labelledby="todayListTitle">
       <div class="row between">
@@ -152,7 +158,7 @@
           <div class="grid">
             <label class="field"><span class="flabel">Autopreis (CHF)</span><input id="cPrice" type="text" inputmode="decimal"></label>
             <label class="field"><span class="flabel">Reserve Unterhalt (CHF)</span><input id="cReserve" type="text" inputmode="decimal"></label>
-            <label class="field"><span class="flabel">Schon gespart (CHF)</span><input id="cSaved" type="text" inputmode="decimal"></label>
+            <label class="field"><span class="flabel">Schon gespart, total (CHF)</span><input id="cSaved" type="text" inputmode="decimal"></label>
             <label class="field"><span class="flabel">Lehrbeginn</span><input id="cStart" type="month"></label>
           </div>
           <h3 class="sub">Pro Lehrjahr</h3>
@@ -164,6 +170,7 @@
             <label class="field"><span class="flabel">Lohn 3. Jahr</span><input id="cW2" type="text" inputmode="decimal"></label>
             <label class="field"><span class="flabel">Sparen 3. Jahr</span><input id="cR2" type="text" inputmode="decimal"></label>
           </div>
+          <label class="check"><input id="cInBudget" type="checkbox" checked><span>Sparrate im Tagesbudget reservieren</span></label>
           <button class="btn primary" id="cSave" type="button">Sparplan speichern</button>
           <p class="status" id="cMsg" role="status"></p>
         </div>
