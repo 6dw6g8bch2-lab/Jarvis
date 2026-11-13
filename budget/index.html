@@ -26,12 +26,10 @@
         <div class="eyebrow" id="todayDate">Heute</div>
         <h1 id="t-heute">Budget</h1>
       </div>
-      <button class="iconbtn" type="button" id="apPasteTop" aria-label="Apple-Pay-Zahlung aus der Zwischenablage einfügen" title="Apple Pay einfügen">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4.5V3.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><path d="M12 9v7M9 13l3 3 3-3"/></svg>
+      <button class="pastebtn" type="button" id="apPasteTop" aria-label="Apple-Pay-Zahlung aus der Zwischenablage einfügen">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4.5V3.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><path d="M12 9v7M9 13l3 3 3-3"/></svg><span>Apple Pay</span>
       </button>
     </header>
-
-    <div class="notice" id="storeNotice" hidden></div>
 
     <section class="card ap" id="apBox" aria-labelledby="apTitle" hidden>
       <h2 class="ap-title" id="apTitle" tabindex="-1"></h2>
@@ -56,6 +54,7 @@
       <div class="sr-only" id="reconLive" role="status" aria-live="polite"></div>
     </section>
 
+    <div class="notice" id="storeNotice" hidden></div>
     <div id="dueBanners" class="stack"></div>
 
     <section class="card entry" id="entryPanel" aria-labelledby="entryTitle">
@@ -86,7 +85,7 @@
 
     <section class="card" aria-labelledby="todayListTitle">
       <div class="row between">
-        <h2 id="todayListTitle">Heute eingetragen</h2>
+        <h2 id="todayListTitle" tabindex="-1">Heute eingetragen</h2>
         <span class="muted small num" id="todaySum"></span>
       </div>
       <div id="todayList"></div>
@@ -125,7 +124,7 @@
       <div class="charts">
         <figure class="chart" id="chBal"></figure>
         <figure class="chart" id="chDay"></figure>
-        <details class="tableview" id="chTable"><summary>Zahlen als Tabelle</summary><div class="tablewrap" id="chTableBody"></div></details>
+        <details class="tableview" id="chTable"><summary>Zahlen als Tabelle</summary><div class="tablewrap" id="chTableBody" role="region" aria-label="Zahlen pro Tag" tabindex="0"></div></details>
       </div>
     </section>
 
@@ -218,17 +217,18 @@
 
     <section class="card" aria-labelledby="apTitle2">
       <h2 id="apTitle2">Apple Pay</h2>
-      <p class="hint">Nach jeder Zahlung legt ein Kurzbefehl die Zahlung in die Zwischenablage. In der App tippst du dann oben rechts auf das Einfügen-Symbol.</p>
+      <p class="hint">Nach jeder Zahlung legt ein Kurzbefehl die Zahlung in die Zwischenablage. In der App tippst du dann oben rechts auf «Apple Pay». iOS fragt dabei kurz, ob die App einfügen darf.</p>
       <details>
         <summary>So richtest du den Kurzbefehl ein</summary>
         <ol class="steps">
           <li>Öffne die App <b>Kurzbefehle</b> → <b>Automation</b> → <b>+</b> → <b>Wallet</b>.</li>
           <li>Wähle deine Karte, «Sofort ausführen» einschalten.</li>
-          <li>Aktion <b>Text</b> hinzufügen mit diesem Inhalt:<br><code class="copy" id="apTemplate">ap-[Aktuelles Datum]-[Betrag]-[Händler]</code><br>Beim Datum «Eigenes Format» wählen: <code>yyyyMMddHHmmss</code>.</li>
-          <li>Aktion <b>In Zwischenablage kopieren</b> hinzufügen.</li>
+          <li>Aktion <b>Zwischenablage abrufen</b> hinzufügen.</li>
+          <li>Aktion <b>Text</b> hinzufügen. Erste Zeile: die Variable <b>Zwischenablage</b>. Zweite Zeile:<br><code>ap-[Aktuelles Datum]-[Betrag]-[Händler]</code><br>Beim Datum «Eigenes Format» wählen: <code>yyyyMMddHHmmss</code>.</li>
+          <li>Aktion <b>In Zwischenablage kopieren</b> mit diesem Text.</li>
           <li>Optional: Aktion <b>Mitteilung zeigen</b> «Zahlung kopiert, Budget öffnen».</li>
         </ol>
-        <p class="hint">Mehrere Zahlungen auf einmal gehen auch: eine pro Zeile.</p>
+        <p class="hint">So sammeln sich mehrere Zahlungen, auch wenn du die App nicht sofort öffnest. Was schon eingetragen ist, erkennt die App und lässt es weg.</p>
       </details>
       <button class="btn" id="apPaste" type="button">Zahlung aus Zwischenablage einfügen</button>
     </section>

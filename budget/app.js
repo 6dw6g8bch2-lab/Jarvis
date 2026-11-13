@@ -1,8 +1,8 @@
 "use strict";
 /* Lionels Budget – läuft komplett im Browser, Daten liegen in localStorage auf dem Gerät. */
-const APP_VERSION = "2.0.0";
+const APP_VERSION = "2.1.0";
 const STORE_KEY = "lionel-budget-v1";
-const EARLY_PAY_DAYS = 7, MIN_TEMPO_DAYS = 5, GOOD_MARGIN = 20, WARN_SHARE = .8, PACE_TOL = .05, BACKUP_REMIND_DAYS = 30;
+const EARLY_PAY_DAYS = 7, MIN_TEMPO_DAYS = 5, GOOD_MARGIN = 20, WARN_SHARE = .8, PACE_TOL = .05, BACKUP_REMIND_DAYS = 7;
 
 const OUT = [
   {id:"essen", label:"Essen & Trinken", short:"Essen"},
@@ -32,8 +32,13 @@ function chf(n, {sign=false, bare=false} = {}) {
   return (neg ? "−" : (sign && n > 0.005 ? "+" : "")) + (bare ? "" : "CHF ") + s[0] + "." + s[1];
 }
 function parseAmt(v) {
-  const raw = String(v || "").trim().replace(/['’\s]/g, "").replace(",", ".").replace(/\.[-–]$/, "");
-  return /^\d+(\.\d{1,2})?$/.test(raw) ? r2(+raw) : NaN;
+  // akzeptiert 12.50, 12,50, 12.–, 1'250.00, 1.250,00 und «CHF 885.20»
+  const raw = String(v || "").trim().replace(/^(chf|fr\.?)\s*/i, "").replace(/\s*(chf|fr\.?)$/i, "").replace(/[.,][-–]$/, "").replace(/['’\s]/g, "");
+  if (!/^\d[\d.,]*$/.test(raw)) return NaN;
+  let a = raw;
+  if (a.includes(",") && a.includes(".")) a = a.lastIndexOf(",") > a.lastIndexOf(".") ? a.replace(/\./g, "").replace(",", ".") : a.replace(/,/g, "");
+  else a = a.replace(",", ".");
+  return /^\d+(\.\d{1,2})?$/.test(a) ? r2(+a) : NaN;
 }
 const D = s => { const [y,m,d] = s.split("-").map(Number); return new Date(y, m - 1, d, 12); };
 const iso = d => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
@@ -68,6 +73,8 @@ function cleanPayment(p) {
   if (p.source) o.source = String(p.source);
   if (p.merchant) o.merchant = String(p.merchant).slice(0, 60);
   if (p.rid) o.rid = String(p.rid);
+  if (p.needsCat) o.needsCat = true;
+  if (p.refundOf && OUT.some(c => c.id === p.refundOf)) o.refundOf = p.refundOf;
   return o;
 }
 function cleanSettings(b) {
@@ -125,9 +132,12 @@ const isFix = id => OUT.some(c => c.fixed && c.id === id);
 const sum = a => r2(a.reduce((x, p) => x + p.amount, 0));
 function stats(per) {
   const list = P.filter(p => p.date >= per.start && p.date <= per.end);
-  const out = sum(list.filter(p => p.type === "out")), inc = sum(list.filter(p => p.type === "in"));
+  // Rückerstattungen verringern die Ausgaben der ursprünglichen Kategorie
+  const ref = list.filter(p => p.category === "rueckerstattung"), refSum = sum(ref);
+  const out = r2(sum(list.filter(p => p.type === "out")) - refSum), inc = r2(sum(list.filter(p => p.type === "in")) - refSum);
   const by = {}; list.filter(p => p.type === "out").forEach(p => by[p.category] = r2((by[p.category] || 0) + p.amount));
-  return {list, out, inc, by};
+  ref.forEach(p => { const c = p.refundOf || "sonstiges"; by[c] = r2(Math.max((by[c] || 0) - p.amount, 0)); });
+  return {list, out, inc, by, ref};
 }
 // Wann ist eine feste Zahlung in dieser Periode fällig?
 function dueDate(per, day) {
@@ -149,15 +159,18 @@ function toast(html, {err=false, undo=null, ms=err ? 6000 : 4500} = {}) {
   t.innerHTML = `<span>${html}</span>${undo ? `<button class="btn ghost" type="button" id="toastUndo">Rückgängig</button>` : ""}`;
   t.hidden = false;
   if (undo) $("toastUndo").onclick = () => { clearTimeout(toastTimer); t.hidden = true; undo(); };
-  toastTimer = setTimeout(() => { t.hidden = true; }, undo ? 8000 : ms);
+  const dur = undo ? 8000 : ms, arm = () => { clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, dur); };
+  t.onpointerenter = t.onfocusin = () => clearTimeout(toastTimer);
+  t.onpointerleave = t.onfocusout = arm;
+  arm();
 }
 function showNotice() {
   const n = $("storeNotice");
   if (!storeOk) { n.hidden = false; n.textContent = "Dieses Gerät lässt die App gerade nichts speichern (privater Modus?). Einträge gehen beim Schliessen verloren."; return; }
   const days = lastBackup ? (Date.now() - lastBackup) / 864e5 : Infinity;
-  if (P.length >= 15 && days > BACKUP_REMIND_DAYS) {
+  if (P.length >= 5 && days > BACKUP_REMIND_DAYS) {
     n.hidden = false;
-    n.innerHTML = `${lastBackup ? "Dein letztes Backup ist über einen Monat alt." : "Du hast noch kein Backup gemacht."} Deine Daten liegen nur auf diesem Gerät. <button class="linkbtn" type="button" id="goBackup">Jetzt sichern</button>`;
+    n.innerHTML = `${lastBackup ? "Dein letztes Backup ist über eine Woche alt." : "Noch kein Backup."} Deine Daten liegen nur auf diesem iPhone. <button class="linkbtn" type="button" id="goBackup">Jetzt sichern</button>`;
     $("goBackup").onclick = () => { switchTab("mehr"); $("bakExport").focus(); $("bakExport").scrollIntoView({block:"center"}); };
   } else n.hidden = true;
 }
@@ -197,7 +210,8 @@ function renderHero() {
   const elapsed = diff(per.start, today) + 1, left = per.days - elapsed + 1, after = per.days - elapsed;
   const outs = st.list.filter(p => p.type === "out" && p.date <= today);
   // «Nicht erfasst» stammt aus früheren Tagen und belastet nicht das heutige Tagesbudget
-  const varBefore = sum(outs.filter(p => (p.date < today || p.category === "unerfasst") && !isFix(p.category)));
+  const refunds = sum(st.ref.filter(p => p.date <= today && !isFix(p.refundOf)));
+  const varBefore = r2(sum(outs.filter(p => (p.date < today || p.category === "unerfasst") && !isFix(p.category))) - refunds);
   const varToday = sum(outs.filter(p => p.date === today && p.category !== "unerfasst" && !isFix(p.category)));
   const outSoFar = sum(outs);
   const fixedLimit = OUT.filter(c => c.fixed).reduce((x, c) => x + Math.max(+S.limits[c.id] || 0, st.by[c.id] || 0), 0);
@@ -220,14 +234,15 @@ function renderHero() {
   const noSetup = !S.startBalance && !P.length;
   if (noSetup) {
     $("heroBig").innerHTML = `<span class="cur">CHF</span>–`; $("heroBig").className = "big num";
-    $("heroSub").innerHTML = `Willkommen! Trag unter <b>Mehr</b> deinen Kontostand, Lohn und deine Limits ein. Dann rechnet die App dein Tagesbudget aus.`;
+    $("heroSub").innerHTML = `Willkommen! Trag deinen Kontostand, deinen Lohn und dein Ziel ein. Dann rechnet die App dein Tagesbudget aus.<br><button class="btn primary" type="button" id="goSetup" style="margin-top:10px">Jetzt einrichten</button>`;
+    $("goSetup").onclick = () => { switchTab("mehr"); $("sBal").focus(); };
     setPill("neutral", "Einrichten"); $("pace").hidden = true; facts([]); renderRecon(); return;
   }
   $("heroBig").innerHTML = `<span class="cur">CHF</span>${esc(chf(todayLeft, {bare:true}))}`;
   const tomorrow = left > 1 ? Math.max(base - varToday, 0) / (left - 1) : 0;
   let sub;
   if (base <= 0) sub = `Dein Budget ist um ${chf(-base)} überzogen. Bis zum Lohn solltest du nichts mehr ausgeben.`;
-  else if (todayLeft >= 0) sub = `Tagesbudget ${chf(daily)} · noch ${left} ${left === 1 ? "Tag" : "Tage"} bis zum Lohn.${fixedRest > 0 ? ` ${chf(fixedRest)} für Fixkosten sind reserviert.` : ""}`;
+  else if (todayLeft >= 0) sub = `Noch ${left} ${left === 1 ? "Tag" : "Tage"} bis zum Lohn.${fixedRest > 0 ? ` ${chf(fixedRest)} für Fixkosten sind reserviert.` : ""}`;
   else sub = `Du bist heute ${chf(-todayLeft)} über deinem Tagesbudget von ${chf(daily)}.${left > 1 ? ` Ab morgen hast du noch ${chf(tomorrow)} pro Tag.` : ""}`;
   $("heroSub").textContent = sub;
   const goalPart = goal > 0 ? (projEnd >= goal + GOOD_MARGIN ? "good" : projEnd >= goal ? "warn" : "bad") : "none";
@@ -243,12 +258,12 @@ function renderHero() {
     const tp = Math.min(elapsed / per.days * 100, 100), bp = Math.min(outSoFar / total * 100, 100), fast = (outSoFar - unerf) / total > elapsed / per.days + PACE_TOL;
     $("paceFill").style.width = bp + "%"; $("paceFill").style.background = fast ? "var(--warn-fill)" : "var(--accent)";
     $("paceMarker").style.left = `calc(${tp}% - 1px)`;
-    $("paceLeft").innerHTML = `${esc(chf(outSoFar))} von ${esc(chf(total, {bare:true}))} gebraucht<span class="sr-only">, ${fast ? "schneller als geplant" : "im Plan"}</span>`;
+    $("paceLeft").innerHTML = `${esc(chf(outSoFar))} von ${esc(chf(total, {bare:true}))} ausgegeben<span class="sr-only">, ${fast ? "schneller als geplant" : "im Plan"}</span>`;
     $("paceRight").textContent = `Tag ${elapsed} von ${per.days}`;
   }
   const inc = earlyInc > 0 ? earlyInc : (+S.income || 0), gap = r2(projEnd - goal);
   facts(inc > 0 && goal > 0
-    ? [["Kontostand jetzt", chf(balNow)], ["Erwartet nach Lohn", chf(r2(projEnd + inc))], ["Ziel nach Lohn", chf(r2(goal + inc))], [gap >= 0 ? "Über dem Ziel" : "Unter dem Ziel", chf(gap, {sign:true}), gap >= GOOD_MARGIN ? "good" : gap >= 0 ? "warn" : "bad"]]
+    ? [["Kontostand jetzt", chf(balNow)], ["Nach dem Lohn voraussichtlich", chf(r2(projEnd + inc))], [(gap >= 0 ? "Über" : "Unter") + " deinem Ziel von " + chf(r2(goal + inc), {bare:true}).replace(/\.00$/, ""), chf(gap, {sign:true}), gap >= GOOD_MARGIN ? "good" : gap >= 0 ? "warn" : "bad"]]
     : [["Kontostand jetzt", chf(balNow)], ["Voraussichtlich am " + fmtDay(per.end), chf(projEnd), goal && projEnd < goal ? "bad" : ""], ["Dein Ziel", goal ? chf(goal) : "–"]]);
   renderRecon();
 }
@@ -272,7 +287,7 @@ function renderRecon() {
     <span class="amount"><span>CHF</span><input id="reconAmt" type="text" inputmode="decimal" autocomplete="off" placeholder="${esc(heroBal.toFixed(2))}" aria-describedby="reconPrev reconHint"></span>
     <div class="preview" id="reconPrev"></div>
     <div class="inrow"><button class="btn" type="button" id="reconCancel">Abbrechen</button><button class="btn primary" type="button" id="reconOk">Übernehmen</button></div>
-    <p class="hint" id="reconHint">Laut deinen Einträgen sind es ${esc(chf(heroBal))}. Nimm den verfügbaren Betrag, nicht den gebuchten Saldo. Am besten einmal pro Woche.</p>`;
+    <p class="hint" id="reconHint">Laut deinen Einträgen sind es ${esc(chf(heroBal))}. Nimm den Betrag, den die Bank-App als «verfügbar» zeigt. Am besten einmal pro Woche.</p>`;
   const inp = $("reconAmt"); inp.value = reconDraft; if (hadFocus) inp.focus();
   const preview = () => {
     const real = parseAmt(inp.value), el = $("reconPrev"); el.className = "preview";
@@ -309,7 +324,10 @@ function renderRecon() {
 function renderBanners() {
   const today = todayIso(), per = periodOf(today), out = [];
   lohnDue = S.income > 0 && per.start > S.startDate && !P.some(p => p.type === "in" && p.category === "lohn" && p.date >= addDays(per.start, -EARLY_PAY_DAYS) && p.date <= per.end);
-  if (lohnDue) out.push(`<div class="banner"><div class="t"><b>Lohn eingegangen?</b>Lohn vom ${esc(fmtDay(per.start))} ist noch nicht eingetragen.</div><div class="acts"><button class="btn primary" type="button" data-lohn>${esc(chf(S.income))} eintragen</button></div></div>`);
+  if (lohnDue) out.push(`<div class="banner"><div class="t"><b>Lohn eingegangen?</b>Lohn vom ${esc(fmtDay(per.start))} ist noch nicht eingetragen.</div><div class="acts"><button class="btn primary" type="button" data-lohn="${per.start}">${esc(chf(S.income))} eintragen</button></div></div>`);
+  // Lohn kommt manchmal ein paar Tage vor dem Lohntag
+  else if (S.income > 0 && diff(today, per.end) < 3 && !P.some(p => p.type === "in" && p.category === "lohn" && p.date > addDays(per.end, -EARLY_PAY_DAYS)))
+    out.push(`<div class="banner"><div class="t"><b>Lohn schon da?</b>Manchmal kommt er vor dem ${esc(fmtDay(addDays(per.end, 1)))}.</div><div class="acts"><button class="btn" type="button" data-lohn="${today}">${esc(chf(S.income))} eintragen</button></div></div>`);
   for (const r of S.recurring) {
     const due = dueDate(per, r.day), key = r.id + ":" + per.start;
     if (due > today || S.skips[key] || P.some(p => p.rid === r.id && p.date >= per.start && p.date <= per.end)) continue;
@@ -335,11 +353,11 @@ function renderCats() {
 }
 
 function itemHtml(p, showDate) {
-  const icon = ICON[p.category] || "•";
+  const icon = ICON[p.category] || "•", open = p.needsCat ? `<div class="note open">Kategorie wählen</div>` : "";
   return `<button class="item" type="button" data-edit="${esc(p.id)}" aria-label="${esc(LABEL[p.category] || p.category)}, ${p.type === "in" ? "plus" : "minus"} ${esc(chf(p.amount))}${showDate ? ", " + esc(fmtDay(p.date)) : ""}${p.note ? ", " + esc(p.note) : ""}. Bearbeiten">
     <span class="ic" aria-hidden="true">${icon}</span>
-    <span class="what"><div>${esc(LABEL[p.category] || p.category)}</div>${p.note ? `<div class="note">${esc(p.note)}</div>` : ""}</span>
-    <span class="amt ${p.type === "in" ? "in" : ""}">${p.type === "in" ? "+" : "−"}${chf(p.amount, {bare:true})}</span></button>`;
+    <span class="what"><div>${esc(LABEL[p.category] || p.category)}</div>${p.note ? `<div class="note">${esc(p.note)}</div>` : ""}${open}</span>
+    <span class="amt ${p.type === "in" ? "in" : ""}">${p.type === "in" ? "+" : "−"}${chf(p.amount, {bare:true})}</span><span class="chev" aria-hidden="true"></span></button>`;
 }
 const byNewest = (a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0);
 function renderTodayList() {
@@ -541,9 +559,9 @@ function renderCar() {
   const pill = $("carPill"); pill.className = "pill " + (carStored ? "good" : "neutral"); pill.textContent = carStored ? "Dein Plan" : "Vorschlag";
   let when;
   if (p.reach && p.reach.k === null) when = `<dd class="good">schon erreicht</dd>`;
-  else if (p.reach) when = `<dd>${MONL[p.reach.k % 12]} ${Math.floor(p.reach.k / 12)} · ${p.reach.yr + 1}. Lehrjahr</dd>`;
+  else if (p.reach) when = `<dd class="wrap">${MONL[p.reach.k % 12]} ${Math.floor(p.reach.k / 12)} · ${p.reach.yr + 1}. Lehrjahr</dd>`;
   else if (p.target <= 0) when = `<dd>kein Ziel gesetzt</dd>`;
-  else when = `<dd class="warn">nicht bis Lehrende, es fehlen ${chf(p.target - p.end)}</dd>`;
+  else when = `<dd class="warn wrap">nicht bis Lehrende, es fehlen ${chf(p.target - p.end)}</dd>`;
   const int = n => chf(Math.round(n), {bare:true}).replace(/\.00$/, "");
   const rows = p.rows.map((r, i) => { const w = +C.wages[i] || 0, rate = +C.rates[i] || 0, share = w > 0 ? Math.round(rate / w * 100) + " %" : "–";
     return `<tr class="${i === p.nowYr ? "now" : ""}"><td>${i + 1}. Jahr${i === p.nowYr ? ' <span class="nowtag">jetzt</span>' : ""}</td><td>${int(rate)}</td><td>${share}</td><td>${int(r.sum)}</td></tr>`; }).join("");
@@ -561,7 +579,7 @@ function renderCar() {
       <div><dt>Gespart bei Lehrende (${p.endLabel})</dt><dd>${chf(p.end)}</dd></div>
     </dl>
     <div class="tablewrap" role="region" aria-label="Sparplan pro Lehrjahr" tabindex="0"><table>
-      <thead><tr><th>Lehrjahr</th><th>Pro Monat</th><th>vom Lohn</th><th>Summe</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <thead><tr><th>Lehrjahr</th><th>Pro Monat</th><th>%</th><th>Summe</th></tr></thead><tbody>${rows}</tbody></table></div>
     <p class="note">Gezählt wird ab dem nächsten Lohn, jeden Monat einmal. ${carStored ? "Tipp nach jedem Lohn auf den Knopf oben, wenn du gespart hast." : "Speichere den Plan unter «Sparplan anpassen», dann kannst du jeden Monat dein Gespartes eintragen."} Die Reserve deckt Versicherung, Service und Benzin für die ersten Monate.</p>`;
   const add = $("cAdd");
   if (add) add.onclick = () => { const old = C.saved; C.saved = r2(C.saved + curRate); save(); renderCar();
@@ -619,10 +637,10 @@ function parseAp(line) {
   let h = String(line || "").trim();
   const hashAt = h.indexOf("#ap"); if (hashAt >= 0) h = h.slice(hashAt + 1);
   try { h = decodeURIComponent(h); } catch {}
-  const mm = /^ap(?:c-([A-Za-zäöü]+))?-(\d{12,14})-(-?)([^-]*)-?(.*)$/i.exec(h); if (!mm) return null;
+  const mm = /^ap(?:c-([A-Za-zäöü]+))?-(\d{12,14})-(-?)([^\d-]*[-−]?[^\d-]*\d[\d'’.,_]*[^-]*)-?(.*)$/i.exec(h); if (!mm) return null;
   const ts = mm[2].padEnd(14, "0"), d = `${ts.slice(0, 4)}-${ts.slice(4, 6)}-${ts.slice(6, 8)}`;
-  const amount = parseAmount(mm[4]), refund = mm[3] === "-" || /^\s*[-−]/.test(mm[4]);
-  const date = isDate(d) && d <= todayIso() && d > "2000-01-01" ? d : todayIso();
+  const amount = parseAmount(mm[4]), refund = mm[3] === "-" || /[-−]\s*\d/.test(mm[4]);
+  const date = isDate(d) && iso(D(d)) === d && d <= todayIso() && d > "2000-01-01" ? d : todayIso();
   return {id:"ap-" + ts + "-" + (Number.isFinite(amount) ? Math.round(amount * 100) : 0), amount, date, refund, picked:pickedCat(mm[1]),
     merchant:mm[5].replace(/_+/g, " ").replace(/\s+/g, " ").trim().slice(0, 60)};
 }
@@ -631,9 +649,9 @@ function ingestAp(ap) {
   const ex = P.find(p => p.id === ap.id);
   if (ex) return {status:"dup", p:ex};
   if (apSeen.has(ap.id)) return {status:"deleted"};
-  const cat = ap.refund ? "rueckerstattung" : (ap.picked || guessCat(ap.merchant) || "sonstiges");
+  const cat = ap.refund ? "rueckerstattung" : (ap.picked || guessCat(ap.merchant) || "sonstiges"), refundOf = ap.refund ? (guessCat(ap.merchant) || "sonstiges") : null;
   const known = ap.refund || !!ap.picked || cat !== "sonstiges" || !!M[merchKey(ap.merchant)];
-  const p = cleanPayment({id:ap.id, amount:ap.amount, type:ap.refund ? "in" : "out", category:cat, date:ap.date, note:ap.merchant ? "Apple Pay · " + ap.merchant : "Apple Pay", source:"applepay", merchant:ap.merchant, createdAt:Date.now()});
+  const p = cleanPayment({id:ap.id, amount:ap.amount, type:ap.refund ? "in" : "out", category:cat, date:ap.date, note:ap.merchant ? "Apple Pay · " + ap.merchant : "Apple Pay", source:"applepay", merchant:ap.merchant, refundOf, needsCat:!known, createdAt:Date.now()});
   P = [...P, p]; apSeen.add(p.id);
   return {status:"new", p, known};
 }
@@ -704,6 +722,7 @@ function openEdit(id) {
   const dlg = $("editDlg");
   if (typeof dlg.showModal === "function") dlg.showModal(); else dlg.setAttribute("open", "");
 }
+function refocus(id) { const el = document.querySelector(`.view:not([hidden]) [data-edit="${CSS.escape(id || "")}"]`); if (el) el.focus({preventScroll:true}); }
 function closeEdit() { const dlg = $("editDlg"); if (dlg.open) dlg.close(); }
 
 /* ---------- Navigation ---------- */
@@ -712,6 +731,7 @@ function switchTab(t) {
   document.querySelectorAll(".view").forEach(v => v.hidden = v.id !== "v-" + t);
   document.querySelectorAll(".tabbar [data-tab]").forEach(b => { if (b.dataset.tab === t) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current"); });
   window.scrollTo(0, 0);
+  const h = $("t-" + t); if (h && document.activeElement && document.activeElement.closest(".tabbar")) { h.setAttribute("tabindex", "-1"); h.focus({preventScroll:true}); }
   if (t === "verlauf") renderVerlauf();
   if (t === "mehr") { fillSettings(); renderMehr(); }
   if (t === "sparen") { renderCar(); if (!$("carEdit").open) fillCar(); }
@@ -740,7 +760,8 @@ function bind() {
   $("fAmount").addEventListener("input", () => $("fAmount").removeAttribute("aria-invalid"));
   $("cats").addEventListener("click", e => {
     const b = e.target.closest("[data-cat]"); if (!b) return;
-    const amount = parseAmt($("fAmount").value);
+    let amount = parseAmt($("fAmount").value);
+    if (!$("fAmount").value.trim() && b.dataset.cat === "lohn" && S.income > 0) amount = S.income;
     if (!(amount > 0)) { $("fAmount").setAttribute("aria-invalid", "true"); toast($("fAmount").value.trim() ? "Betrag nicht erkannt. Schreib ihn so: 12.50" : "Gib zuerst einen Betrag ein, z. B. 12.50.", {err:true}); $("fAmount").focus(); return; }
     const date = $("fDate").value || todayIso();
     if (date > todayIso()) { toast("Das Datum liegt in der Zukunft. Wähl heute oder einen Tag davor.", {err:true}); $("moreBox").open = true; return; }
@@ -757,7 +778,7 @@ function bind() {
   $("dueBanners").addEventListener("click", e => {
     const b = e.target.closest("button"); if (!b) return;
     const per = periodOf(todayIso());
-    if (b.hasAttribute("data-lohn")) addEntry({amount:S.income, type:"in", category:"lohn", date:per.start, note:""});
+    if (b.hasAttribute("data-lohn")) addEntry({amount:S.income, type:"in", category:"lohn", date:isDate(b.dataset.lohn) ? b.dataset.lohn : per.start, note:""});
     else if (b.dataset.rec) { const r = S.recurring.find(x => x.id === b.dataset.rec); if (r) addEntry({amount:r.amount, type:"out", category:"handy", date:dueDate(per, r.day), note:r.name, rid:r.id}); }
     else if (b.dataset.skip) { const key = b.dataset.skip + ":" + per.start; S.skips[key] = true; save(); renderAll();
       toast("Für diese Periode ausgeblendet.", {undo:() => { delete S.skips[key]; save(); renderAll(); }}); }
@@ -772,12 +793,14 @@ function bind() {
     if (!(amount > 0)) { $("eMsg").textContent = "Betrag nicht erkannt. Schreib ihn so: 12.50"; $("eAmount").focus(); return; }
     if (!isDate(date) || date > todayIso()) { $("eMsg").textContent = "Wähl ein Datum bis heute."; $("eDate").focus(); return; }
     const old = P.find(x => x.id === editId); if (!old) { closeEdit(); return; }
-    const upd = {...old, amount, date, type:editMode, category:$("eCats").dataset.sel, note:$("eNote").value.trim().slice(0, 80)};
+    const upd = {...old, amount, date, type:editMode, category:$("eCats").dataset.sel, note:$("eNote").value.trim().slice(0, 80)}; delete upd.needsCat;
     if (old.merchant && upd.type === "out" && upd.category !== old.category && OUT.some(c => c.id === upd.category)) M[merchKey(old.merchant)] = upd.category;
-    P = P.map(x => x.id === editId ? upd : x); save(); closeEdit(); renderAll();
+    P = P.map(x => x.id === editId ? upd : x); save(); closeEdit(); renderAll(); refocus(old.id);
     toast("Gespeichert.", {undo:() => { P = P.map(x => x.id === old.id ? old : x); save(); renderAll(); }});
   };
-  $("eDel").onclick = () => { const id = editId; closeEdit(); removeEntry(id); };
+  $("eDel").onclick = () => { const id = editId; closeEdit(); removeEntry(id); const h = tab === "verlauf" ? $("listTitle") : $("todayListTitle"); h.setAttribute("tabindex", "-1"); h.focus({preventScroll:true}); };
+  $("editDlg").addEventListener("cancel", () => setTimeout(() => refocus(editId), 0));
+  $("editForm").addEventListener("submit", () => setTimeout(() => refocus(editId), 0));
   $("editDlg").addEventListener("click", e => { if (e.target === $("editDlg")) closeEdit(); });
 
   // Abgleich: Rückmeldung bei Escape aus Liste etc.
@@ -801,13 +824,14 @@ function bind() {
     if (b.hasAttribute("data-apclose")) { apState = null; renderAp(); $("heroLabel").scrollIntoView({block:"start"}); return; }
     if (b.dataset.apcat) {
       const c = b.dataset.apcat, p = P.find(x => x.id === apState.id); if (!p) return;
-      P = P.map(x => x.id === p.id ? {...x, category:c} : x);
+      P = P.map(x => x.id === p.id ? (({needsCat, ...r}) => ({...r, category:c}))(x) : x);
       if (p.merchant) M[merchKey(p.merchant)] = c;
       save(); apState = {...apState, unknown:false, dup:false}; renderAll();
       toast(`Als ${esc((OUT.find(o => o.id === c) || {}).short)} gespeichert.${p.merchant ? " Laden gemerkt." : ""}`);
       return;
     }
-    if (b.hasAttribute("data-apdel")) { const id = apState.id; P = P.filter(x => x.id !== id); save(); apState = {id, deleted:true}; renderAll(); $("apBox").querySelector("[data-apclose]")?.focus(); }
+    if (b.hasAttribute("data-apdel")) { const id = apState.id, old = P.find(x => x.id === id); P = P.filter(x => x.id !== id); save(); apState = null; renderAll();
+      toast("Zahlung gelöscht.", {undo:() => { if (old) { P = [...P, old]; save(); apState = {id}; renderAll(); } }}); $("heroLabel").scrollIntoView({block:"start"}); }
   });
   window.addEventListener("hashchange", () => { if (/#ap/i.test(location.hash)) { const h = location.hash; clearHash(); handleApText(h, {fromHash:true}); } });
 
@@ -868,7 +892,7 @@ function bind() {
     }
     if (!done) { const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); }
     save(); renderMehr(); showNotice();
-    const m = $("bakMsg"); m.className = "status ok"; m.textContent = "Backup erstellt.";
+    const m = $("bakMsg"); m.className = "status ok"; m.textContent = "Backup bereit. Wähl im Menü «In Dateien sichern» und dann iCloud Drive.";
   };
   $("bakImport").addEventListener("change", async e => {
     const f = e.target.files && e.target.files[0]; e.target.value = ""; if (!f) return;
@@ -906,6 +930,10 @@ fillSettings(); fillCar();
 let startTab = "heute"; try { startTab = sessionStorage.getItem("lb-tab") || "heute"; } catch {}
 switchTab(["heute","verlauf","sparen","mehr"].includes(startTab) ? startTab : "heute");
 renderAll();
-if (/#ap/i.test(location.hash)) { const h = location.hash; clearHash(); handleApText(h, {fromHash:true}); }
+const standalone = navigator.standalone === true || matchMedia("(display-mode: standalone)").matches;
+if (/#ap/i.test(location.hash)) { const h = location.hash; clearHash();
+  // Auf dem iPhone hat Safari einen eigenen Speicher. Die Zahlung käme sonst nicht in der App an.
+  if (standalone || !/iPhone|iPad/.test(navigator.userAgent)) handleApText(h, {fromHash:true});
+  else toast("Safari speichert getrennt von der App. Nutze für Apple Pay den Weg über die Zwischenablage.", {err:true, ms:9000}); }
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
