@@ -50,7 +50,7 @@ p{margin:0}
 /* ---------- Gerüst ---------- */
 .app{max-width:640px;margin:0 auto;min-height:100dvh}
 .view{display:grid;gap:14px;padding:calc(var(--sat) + 12px) max(var(--gut),env(safe-area-inset-right,0px)) calc(var(--sab) + var(--tabh) + 24px) max(var(--gut),env(safe-area-inset-left,0px))}
-.top{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;padding:8px 2px 2px}
+.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:8px 12px;padding:8px 2px 2px}
 .eyebrow{font-size:.8rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;display:grid;gap:12px;min-width:0;box-shadow:var(--shadow)}
 .card>*{min-width:0}
@@ -102,7 +102,11 @@ p{margin:0}
 .big .cur{font-size:.36em;color:var(--muted);font-weight:500;margin-right:.3em;letter-spacing:0}
 .big.bad{color:var(--bad)}
 .big.warn{color:var(--warn)}
-.hero-sub{font-size:.95rem}
+.hero-sub{font-size:.92rem}
+.hero{padding-bottom:8px}
+.hero .pill{background:var(--surface)}
+.top .pill.neutral{background:var(--surface);border:1px solid var(--line)}
+.view>*{min-width:0}
 .pace{display:grid;gap:6px;margin-top:2px}
 .pace .track{position:relative;height:10px;border-radius:5px;background:var(--surface)}
 .pace .fill{position:absolute;inset:0 auto 0 0;border-radius:5px;background:var(--accent);width:0}
@@ -112,12 +116,13 @@ p{margin:0}
 .hero-more>summary span{color:var(--muted)}
 .hero-more>summary b{margin-left:auto;font-weight:650}
 .hero-more>summary::after{margin-left:2px}
-.hero-more>.stack{padding-top:8px}
+.hero-more>.stack{padding-top:8px;grid-template-columns:minmax(0,1fr)}
+.hero-more>summary{flex-wrap:wrap}
 .hero-more .facts>div:first-child{border-top:0}
 .facts{display:grid;margin:0}
-.facts>div{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid color-mix(in srgb,var(--fg) 10%,transparent)}
+.facts>div{display:flex;flex-wrap:wrap;justify-content:space-between;gap:2px 12px;padding:9px 0;border-top:1px solid color-mix(in srgb,var(--fg) 10%,transparent)}
 .facts dt{color:var(--muted);font-size:.92rem}
-.facts dd{margin:0;font-family:var(--f-num);font-variant-numeric:tabular-nums;white-space:nowrap;font-size:.95rem}
+.facts dd{margin:0 0 0 auto;font-family:var(--f-num);font-variant-numeric:tabular-nums;white-space:nowrap;font-size:.95rem}
 .facts dd.good{color:var(--good)}.facts dd.warn{color:var(--warn)}.facts dd.bad{color:var(--bad)}
 
 /* Abgleich */
@@ -135,7 +140,9 @@ p{margin:0}
 .banner{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;justify-content:space-between;background:var(--surface);border:1px solid var(--accent);border-radius:var(--r);padding:12px 14px}
 .banner .t{font-size:.95rem;min-width:0}
 .banner .t b{display:block}
-.banner .acts{display:flex;gap:6px;align-items:center}
+.banner .acts{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.banner{background:var(--accent-soft)!important;border-color:transparent!important}
+.banner .btn.ghost,.toast .btn.ghost{margin-left:-8px}
 .stack:empty{display:none}
 
 /* ---------- Eintragen ---------- */
@@ -149,7 +156,7 @@ p{margin:0}
 .amount span{font-family:var(--f-num);color:var(--muted);font-weight:600}
 .amount input{flex:1;min-width:0;width:100%;border:0;background:transparent;font-family:var(--f-num);font-size:2rem;font-weight:600;padding:6px 0;outline:none}
 .amount input[aria-invalid="true"]{color:var(--bad)}
-.cats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.cats{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,7.5em),1fr));gap:8px}
 .cat{display:grid;align-content:center;gap:2px;text-align:left;border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:10px 12px;cursor:pointer;min-height:62px}
 .cat:active{transform:scale(.97);border-color:var(--accent)}
 .cat b{font-weight:650;font-size:.95rem;overflow-wrap:anywhere}
@@ -295,4 +302,4 @@ dialog::backdrop{background:rgb(0 0 0 / .4)}
   dialog[open] .sheet{animation:up .22s ease-out}
   @keyframes up{from{transform:translateY(24px);opacity:.6}to{transform:none;opacity:1}}
 }
-@media (max-width:360px){.cats{grid-template-columns:repeat(2,minmax(0,1fr))}.kpis{grid-template-columns:1fr}.grid{grid-template-columns:1fr}}
+@media (max-width:360px){.kpis{grid-template-columns:1fr}.grid{grid-template-columns:1fr}}

@@ -1,6 +1,6 @@
 "use strict";
 /* Lionels Budget – läuft komplett im Browser, Daten liegen in localStorage auf dem Gerät. */
-const APP_VERSION = "2.2.0";
+const APP_VERSION = "2.3.0";
 const STORE_KEY = "lionel-budget-v1";
 const EARLY_PAY_DAYS = 7, MIN_TEMPO_DAYS = 5, GOOD_MARGIN = 20, WARN_SHARE = .8, PACE_TOL = .05, BACKUP_REMIND_DAYS = 7;
 
@@ -94,7 +94,7 @@ function cleanSettings(b) {
 function cleanCar(c) {
   const arr = (a, d) => Array.isArray(a) && a.length === 3 ? a.map(x => +x || 0) : [...d];
   return {name:String(c.name || CAR_DEF.name), price:+c.price || 0, reserve:+c.reserve || 0, saved:+c.saved || 0,
-    start:/^\d{4}-\d{2}$/.test(String(c.start)) ? c.start : CAR_DEF.start, wages:arr(c.wages, CAR_DEF.wages), rates:arr(c.rates, CAR_DEF.rates), inBudget:c.inBudget !== false};
+    start:/^\d{4}-\d{2}$/.test(String(c.start)) ? c.start : CAR_DEF.start, wages:arr(c.wages, CAR_DEF.wages), rates:arr(c.rates, CAR_DEF.rates), inBudget:c.inBudget === true};
 }
 function applyData(d) {
   S = cleanSettings(d.settings);
@@ -145,13 +145,15 @@ function stats(per) {
 }
 // Sparziel: C.saved ist der Stand ohne die Einträge in der App, dazu kommen alle Überweisungen aufs Sparkonto
 const savedPays = () => sum(P.filter(isSave));
-const savedTotal = () => r2(C.saved + savedPays());
+const savedTotal = () => r2(Math.max(C.saved + savedPays(), 0));
 const saveOn = () => carStored && C.inBudget;
 // Sparrate der Periode: richtet sich nach dem Lehrjahr beim Lohn, mit dem die Periode beginnt
+const earlyLohn = start => P.filter(p => p.type === "in" && p.category === "lohn" && p.date >= addDays(start, -EARLY_PAY_DAYS) && p.date < start).map(p => p.date).sort()[0];
 function saveInfo(per) {
   const [sy, sm] = C.start.split("-").map(Number), s0 = sy * 12 + (sm - 1), d = D(per.start), k = d.getFullYear() * 12 + d.getMonth();
   const yr = Math.floor((k - s0) / 12), rate = yr >= 0 && yr <= 2 ? (+C.rates[yr] || 0) : 0;
-  const done = sum(P.filter(p => isSave(p) && p.date >= per.start && p.date <= per.end));
+  const next = addDays(per.end, 1), from = earlyLohn(per.start) || per.start, to = earlyLohn(next) || next;
+  const done = sum(P.filter(p => isSave(p) && p.date >= from && p.date < to));
   return {k, s0, yr, rate, done, rest:r2(Math.max(rate - done, 0))};
 }
 // Wann ist eine feste Zahlung in dieser Periode fällig?
@@ -234,7 +236,8 @@ function renderHero() {
   const balNow = balanceAt(addDays(today, 1));
   // Lohn, der schon vor dem Lohntag kam (z. B. am 23.), gehört zur nächsten Periode
   const earlyInc = sum(P.filter(p => p.type === "in" && p.category === "lohn" && p.date > addDays(per.end, -EARLY_PAY_DAYS) && p.date <= today));
-  const balAdj = r2(balNow - earlyInc);
+  const eL = earlyLohn(addDays(per.end, 1)), earlySave = eL ? sum(P.filter(p => isSave(p) && p.date >= eL && p.date <= today)) : 0;
+  const balAdj = r2(balNow - earlyInc + earlySave);
   // Offene Sparrate wird wie offene Fixkosten reserviert. Ist sie überwiesen, sinkt der Kontostand um denselben Betrag.
   const sv = saveInfo(per), saveRest = saveOn() ? sv.rest : 0;
   const goalRoom = balAdj + varToday - goal - fixedRest - saveRest;
@@ -260,15 +263,19 @@ function renderHero() {
   const tomorrow = left > 1 ? Math.max(base - varToday, 0) / (left - 1) : 0;
   let sub;
   const res = []; if (fixedRest > 0) res.push(`${chf(fixedRest)} für Fixkosten`); if (saveRest > 0) res.push(`${chf(saveRest)} fürs Sparziel`);
-  if (base <= 0 && saveRest > 0 && base + saveRest > 0) sub = `Mit der Sparrate von ${chf(saveRest)} geht es diesen Monat nicht auf, es fehlen ${chf(-base)}. Überweis weniger aufs Sparkonto oder gib bis zum Lohn nichts mehr aus.`;
+  if (!lohnDue && saveRest > 0 && goalRoom <= 0 && Math.min(budgetRoom, goalRoom + saveRest) > 0) sub = `Mit der Sparrate von ${chf(saveRest)} geht es diesen Monat nicht auf, es fehlen ${chf(-base)}. Überweis weniger aufs Sparkonto oder gib bis zum Lohn nichts mehr aus.`;
   else if (base <= 0) sub = `Dein Budget ist um ${chf(-base)} überzogen. Bis zum Lohn solltest du nichts mehr ausgeben.`;
   else if (todayLeft >= 0) sub = `Noch ${left} ${left === 1 ? "Tag" : "Tage"} bis zum Lohn.${res.length ? ` Reserviert: ${res.join(" und ")}.` : ""}`;
   else sub = `Du bist heute ${chf(-todayLeft)} über deinem Tagesbudget von ${chf(daily)}.${left > 1 ? ` Ab morgen hast du noch ${chf(tomorrow)} pro Tag.` : ""}`;
   $("heroSub").textContent = sub;
   const goalPart = goal > 0 ? (projEnd >= goal + GOOD_MARGIN ? "good" : projEnd >= goal ? "warn" : "bad") : "none";
   // Rot nur, wenn das Ziel in Gefahr ist. Ein teurer Tag allein ist nur ein Hinweis.
-  $("heroBig").className = "big num" + (base <= 0 || goalPart === "bad" ? " bad" : todayLeft < 0 ? " warn" : "");
-  if (base <= 0 || goalPart === "bad") setPill("bad", "Ziel in Gefahr");
+  // Rot nur, wenn wirklich nichts mehr frei ist. Ein knappes Kontoziel ist ein Hinweis.
+  $("heroBig").className = "big num" + (base <= 0 ? " bad" : goalPart === "bad" || todayLeft < 0 ? " warn" : "");
+  if (base > 0 && goalPart === "bad" && todayLeft >= 0) $("heroSub").textContent += ` Mit deinem jetzigen Tempo fehlen dir bis zum Lohn CHF ${chf(r2(goal - projEnd), {bare:true})} zu deinem Ziel. Gib etwas weniger aus.`;
+  if (base > 0 && saveRest > 0 && todayLeft >= 0) { const wo = r2(Math.max(Math.min(budgetRoom, goalRoom + saveRest), 0) / left - varToday); if (wo > todayLeft + 0.5) $("heroSub").textContent += ` Ohne die Sparrate wären es CHF ${chf(wo, {bare:true})}. Das Geld ist nicht weg, es liegt auf dem Sparkonto.`; }
+  if (base <= 0) setPill("bad", "Ziel in Gefahr");
+  else if (goalPart === "bad") setPill("warn", "Kontoziel knapp");
   else if (todayLeft < 0) setPill("warn", "Heute drüber");
   else if (goalPart === "good") setPill("good", "Auf Kurs");
   else if (goalPart === "warn") setPill("warn", "Knapp auf Kurs");
@@ -283,15 +290,15 @@ function renderHero() {
   }
   const inc = earlyInc > 0 ? earlyInc : (+S.income || 0), gap = r2(projEnd - goal);
   const head = [["Tagesbudget", chf(daily)]];
-  if (saveOn() && sv.rate > 0) head.push(["Aufs Sparkonto diese Periode", `${chf(sv.done, {bare:true})} von ${chf(sv.rate, {bare:true})}`, sv.rest > 0 ? "" : "good"]);
+  if (saveOn() && sv.rate > 0) head.push(["Gespart diesen Monat", `${chf(sv.done, {bare:true})} von ${chf(sv.rate, {bare:true})}`, sv.rest > 0 ? "" : "good"]);
   facts(inc > 0 && goal > 0
-    ? [...head, ["Nach dem Lohn voraussichtlich", chf(r2(projEnd + inc))], [(gap >= 0 ? "Über" : "Unter") + " deinem Ziel von " + chf(r2(goal + inc), {bare:true}).replace(/\.00$/, ""), chf(gap, {sign:true}), gap >= GOOD_MARGIN ? "good" : gap >= 0 ? "warn" : "bad"]]
+    ? [...head, ["Nach dem Lohn", chf(r2(projEnd + inc))], [(gap >= 0 ? "Über" : "Unter") + " deinem Ziel von " + chf(r2(goal + inc), {bare:true}).replace(/\.00$/, ""), chf(gap, {sign:true}), gap >= GOOD_MARGIN ? "good" : gap >= 0 ? "warn" : "bad"]]
     : [...head, ["Voraussichtlich am " + fmtDay(per.end), chf(projEnd), goal && projEnd < goal ? "bad" : ""], ["Dein Ziel", goal ? chf(goal) : "–"]]);
   renderRecon();
 }
 
 function reconSay(t) { $("reconLive").textContent = ""; setTimeout(() => { $("reconLive").textContent = t; }, 150); }
-function armReconTimer() { clearTimeout(reconTimer); reconTimer = setTimeout(() => { reconNote = ""; reconUndoId = null; if (!reconOpen) renderRecon(); }, 12000); }
+function armReconTimer() { clearTimeout(reconTimer); reconTimer = setTimeout(() => { if (!reconOpen && !$("recon").contains(document.activeElement)) { reconNote = ""; reconUndoId = null; renderRecon(); } }, 12000); }
 function reconClose(focus) { reconOpen = false; reconDraft = ""; reconConfirm = null; renderRecon(); if (focus) $("reconOpen")?.focus(); }
 function renderRecon() {
   const box = $("recon");
@@ -309,7 +316,7 @@ function renderRecon() {
     <span class="amount"><span>CHF</span><input id="reconAmt" type="text" inputmode="decimal" autocomplete="off" placeholder="${esc(heroBal.toFixed(2))}" aria-describedby="reconPrev reconHint"></span>
     <div class="preview" id="reconPrev"></div>
     <div class="inrow"><button class="btn" type="button" id="reconCancel">Abbrechen</button><button class="btn primary" type="button" id="reconOk">Übernehmen</button></div>
-    <p class="hint" id="reconHint">Laut deinen Einträgen sind es ${esc(chf(heroBal))}. Nimm den Betrag, den die Bank-App als «verfügbar» zeigt. Am besten einmal pro Woche.</p>`;
+    <p class="hint" id="reconHint">Laut deinen Einträgen sind es ${esc(chf(heroBal))}. Nimm den Betrag, den die Bank-App als «verfügbar» zeigt. Am besten einmal pro Woche.${saveOn() && saveInfo(periodOf(todayIso())).rest > 0 ? " Trag zuerst deine Überweisung aufs Sparkonto ein." : ""}</p>`;
   const inp = $("reconAmt"); inp.value = reconDraft; if (hadFocus) inp.focus();
   const preview = () => {
     const real = parseAmt(inp.value), el = $("reconPrev"); el.className = "preview";
@@ -352,7 +359,7 @@ function renderBanners() {
     out.push(`<div class="banner"><div class="t"><b>Lohn schon da?</b>Manchmal kommt er vor dem ${esc(fmtDay(addDays(per.end, 1)))}.</div><div class="acts"><button class="btn" type="button" data-lohn="${today}">${esc(chf(S.income))} eintragen</button></div></div>`);
   const sv = saveInfo(per);
   if (saveOn() && sv.rest > 0 && !lohnDue && !S.skips["save:" + per.start] && P.some(p => p.type === "in" && p.category === "lohn" && p.date >= addDays(per.start, -EARLY_PAY_DAYS) && p.date <= per.end))
-    out.push(`<div class="banner"><div class="t"><b>${esc(chf(sv.rest))} fürs Sparziel</b>Schon aufs Sparkonto überwiesen?</div><div class="acts"><button class="btn ghost" type="button" data-skip="save">Ausblenden</button><button class="btn primary" type="button" data-save="${sv.rest}">Eintragen</button></div></div>`);
+    out.push(`<div class="banner"><div class="t"><b>${esc(chf(sv.rest))} fürs Sparziel</b>Schon aufs Sparkonto überwiesen?</div><div class="acts"><button class="btn ghost" type="button" data-skip="save" aria-label="Sparziel-Hinweis ausblenden">Später</button><button class="btn primary" type="button" data-save="${sv.rest}" aria-label="${esc(chf(sv.rest))} fürs Sparziel eintragen">Eintragen</button></div></div>`);
   for (const r of S.recurring) {
     const due = dueDate(per, r.day), key = r.id + ":" + per.start;
     if (due > today || S.skips[key] || P.some(p => p.rid === r.id && p.date >= per.start && p.date <= per.end)) continue;
@@ -368,7 +375,7 @@ function renderCats() {
   $("entryHint").textContent = mode === "out" ? "Betrag eingeben, dann Kategorie antippen." : "Betrag eingeben, dann antippen, woher das Geld kommt.";
   $("cats").innerHTML = cats.map(c => {
     let sub = "";
-    if (c.id === SAVE.id) sub = saveOn() && sv.rate > 0 ? (sv.rest > 0 ? `<small><span class="sr-only">, </span>noch ${chf(sv.rest, {bare:true})}</small>` : `<small class="good"><span class="sr-only">, </span>erledigt</small>`) : `<small class="none"><span class="sr-only">, </span>Sparziel</small>`;
+    if (c.id === SAVE.id) sub = saveOn() && sv.rate > 0 ? (sv.rest > 0 ? `<small><span class="sr-only">, </span>${chf(sv.rest, {bare:true})} offen</small>` : `<small class="good"><span class="sr-only">, </span>erledigt</small>`) : `<small class="none"><span class="sr-only">, </span>Sparziel</small>`;
     else if (mode === "out") {
       const lim = +S.limits[c.id] || 0, used = st.by[c.id] || 0;
       if (lim > 0) { const rest = lim - used; sub = rest >= 0 ? `<small><span class="sr-only">, </span>${chf(rest, {bare:true})} frei</small>` : `<small class="bad"><span class="sr-only">, </span>${chf(-rest, {bare:true})} drüber</small>`; }
@@ -478,8 +485,9 @@ function renderCharts(per, st, o) {
   const days = []; for (let d = per.start; d <= per.end; d = addDays(d, 1)) days.push(d);
   const n = days.length, lastIdx = o.isCur ? Math.min(diff(per.start, o.today), n - 1) : n - 1, goal = +S.goal || 0;
   const early = P.filter(p => p.type === "in" && p.category === "lohn" && p.date > addDays(per.end, -EARLY_PAY_DAYS) && p.date <= per.end);
-  const bal = days.slice(0, lastIdx + 1).map(d => r2(balanceAt(addDays(d, 1)) - early.filter(p => p.date <= d).reduce((a, p) => a + p.amount, 0)));
-  const startBal = balanceAt(per.start);
+  const svRate = saveOn() ? saveInfo(per).rate : 0, openSave = d => Math.max(svRate - sum(st.list.filter(p => isSave(p) && p.date <= d)), 0);
+  const bal = days.slice(0, lastIdx + 1).map(d => r2(balanceAt(addDays(d, 1)) - early.filter(p => p.date <= d).reduce((a, p) => a + p.amount, 0) - openSave(d)));
+  const startBal = r2(balanceAt(per.start) - svRate);
   const target = goal > 0 ? goal : (o.total > 0 ? r2(startBal - o.total) : null);
   const plan = i => target == null ? null : r2(startBal + (target - startBal) * (i + 1) / n);
   const proj = o.isCur && heroProjEnd != null && lastIdx < n - 1 ? heroProjEnd : null;
@@ -509,6 +517,7 @@ function renderCharts(per, st, o) {
       : o.isCur ? (onTrack ? `Du liegst ${chf(bal[lastIdx] - plan(lastIdx))} über der Plan-Linie. Bleib darüber, dann schaffst du ${what}.` : `Du liegst ${chf(plan(lastIdx) - bal[lastIdx])} unter der Plan-Linie. Gib ein paar Tage weniger aus, um wieder darüber zu kommen.`)
       : `Am ${fmtDay(per.end)} waren es ${chf(bal[n - 1])}, ${goal > 0 ? "Ziel" : "Plan"} war ${chf(target)}.`;
     if (early.length) sub += ` Ohne den Lohn vom ${fmtDay(early[0].date)}.`;
+    if (svRate > 0) sub += ` Die Sparrate ist schon abgezogen.`;
     $("chBal").innerHTML = `<figcaption><h3>Kontostand bis zum Lohn</h3><div class="sub">${esc(sub)}</div></figcaption>
       <svg viewBox="0 0 ${CW} ${H}" data-ch="bal" role="img" aria-label="Kontostand vom ${esc(fmtDay(per.start))} bis ${o.isCur ? "heute" : esc(fmtDay(per.end))}: ${esc(chf(bal[lastIdx]))}.${target != null ? ` ${goal > 0 ? "Ziel" : "Plan"} am ${esc(fmtDay(per.end))}: ${esc(chf(target))}.` : ""}${proj != null ? ` Prognose: ${esc(chf(proj))}.` : ""}">
         ${g}${planP}${projP}
@@ -596,10 +605,10 @@ function renderCar() {
     return `<tr class="${i === p.nowYr ? "now" : ""}"><td>${i + 1}. Jahr${i === p.nowYr ? ' <span class="nowtag">jetzt</span>' : ""}</td><td>${int(rate)}</td><td>${share}</td><td>${int(r.sum)}</td></tr>`; }).join("");
   // Was in dieser Periode zu tun ist
   let action;
-  if (!carStored) action = `<div class="cta"><p>Das ist erst ein Vorschlag. Übernimmst du ihn, reserviert die App jeden Monat die Sparrate in deinem Tagesbudget${sv.rate > 0 ? `, im Moment <b>CHF ${amt(sv.rate)}</b>` : ""}. Die Zahlen kannst du unten anpassen.</p><button class="btn primary" id="cAdopt" type="button">Plan übernehmen</button></div>`;
+  if (!carStored) action = `<div class="cta"><p>Das ist erst ein Vorschlag. Übernimmst du ihn, reserviert die App jeden Monat die Sparrate in deinem Tagesbudget${sv.rate > 0 ? `, im Moment <b>CHF ${amt(sv.rate)}</b>` : ""}. Dein Tagesbudget sinkt dadurch. Die Zahlen kannst du unten anpassen.</p><button class="btn primary" id="cAdopt" type="button">Plan übernehmen</button></div>`;
   else if (sv.rate <= 0) action = "";
-  else if (sv.rest > 0) action = `<div class="cta"><p><b>Diese Periode:</b> CHF ${amt(sv.done)} von ${amt(sv.rate)} aufs Sparkonto überwiesen.${C.inBudget ? ` CHF ${amt(sv.rest)} sind in deinem Tagesbudget reserviert.` : ""}</p><button class="btn primary" id="cAdd" type="button">CHF ${amt(sv.rest)} überwiesen, eintragen</button></div>`;
-  else action = `<div class="cta done"><p><b>Diese Periode erledigt.</b> CHF ${amt(sv.done)} sind auf dem Sparkonto.</p></div>`;
+  else if (sv.rest > 0) action = `<div class="cta"><p><b>Diesen Monat:</b> CHF ${amt(sv.done)} von ${amt(sv.rate)} aufs Sparkonto überwiesen.${C.inBudget ? ` CHF ${amt(sv.rest)} sind in deinem Tagesbudget reserviert.` : ""}</p><button class="btn primary" id="cAdd" type="button">Ich habe CHF ${amt(sv.rest)} überwiesen</button></div>`;
+  else action = `<div class="cta done"><p><b>Diesen Monat erledigt.</b> CHF ${amt(sv.done)} sind auf dem Sparkonto.</p></div>`;
   $("carBody").innerHTML = `
     <div class="goalname">${esc(C.name)}</div>
     <div class="saved">${chf(p.saved)}<span class="of">von CHF ${int(p.target)} gespart · ${Math.round(pct * 100)} %</span></div>
@@ -613,16 +622,16 @@ function renderCar() {
       <div><dt>Gespart bei Lehrende (${p.endLabel})</dt><dd>${chf(p.end)}</dd></div>
     </dl>
     <div class="tablewrap" role="region" aria-label="Sparplan pro Lehrjahr" tabindex="0"><table>
-      <thead><tr><th>Lehrjahr</th><th>Pro Monat</th><th>%</th><th>Noch geplant</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <thead><tr><th>Lehrjahr</th><th>Pro Monat</th><th>Anteil</th><th>Noch geplant</th></tr></thead><tbody>${rows}</tbody></table></div>
     <p class="note">Jede Überweisung, die du unter «Heute» als <b>Sparen</b> einträgst, zählt hier automatisch mit. Sie gilt nicht als Ausgabe, senkt aber deinen Kontostand, damit der Abgleich mit der Bank-App stimmt. Die Reserve deckt Versicherung, Service und Benzin für die ersten Monate.</p>`;
   const add = $("cAdd");
-  if (add) add.onclick = () => addEntry({amount:sv.rest, type:"out", category:SAVE.id, date:todayIso(), note:""}, {refill:false});
+  if (add) add.onclick = () => { addEntry({amount:sv.rest, type:"out", category:SAVE.id, date:todayIso(), note:""}, {refill:false}); const h = $("t-sparen"); h.setAttribute("tabindex", "-1"); h.focus({preventScroll:true}); };
   const adopt = $("cAdopt");
   if (adopt) adopt.onclick = () => { carStored = true; save(); renderAll(); fillCar();
-    toast(sv.rate > 0 ? `Plan übernommen. CHF ${amt(sv.rest)} sind jetzt im Tagesbudget reserviert.` : "Plan übernommen.", {undo:() => { carStored = false; save(); renderAll(); }}); };
+    toast(sv.rest > 0 ? `Plan übernommen. Dein Tagesbudget ist jetzt CHF ${amt(heroToday ?? 0)}, weil CHF ${amt(sv.rest)} bis zum Lohn zurückgelegt werden.` : "Plan übernommen.", {undo:() => { carStored = false; save(); renderAll(); }}); };
 }
 function fillCar() {
-  $("cName").value = C.name; $("cPrice").value = C.price; $("cReserve").value = C.reserve; $("cSaved").value = savedTotal(); $("cStart").value = C.start; $("cInBudget").checked = C.inBudget;
+  $("cName").value = C.name; $("cPrice").value = C.price; $("cReserve").value = C.reserve; $("cSaved").value = $("cSaved").dataset.shown = savedTotal(); $("cStart").value = C.start; $("cInBudget").checked = C.inBudget;
   [0, 1, 2].forEach(i => { $("cW" + i).value = C.wages[i]; $("cR" + i).value = C.rates[i]; });
 }
 
@@ -776,7 +785,7 @@ function switchTab(t) {
 function renderAll() {
   renderToday();
   if (tab === "verlauf") renderVerlauf();
-  if (tab === "sparen") renderCar();
+  if (tab === "sparen") { renderCar(); if (!$("carEdit").open) fillCar(); }
   if (tab === "mehr") renderMehr();
   renderAp();
 }
@@ -806,7 +815,7 @@ function bind() {
     if (addEntry({amount, type:mode, category:b.dataset.cat, date, note:$("fNote").value.trim()})) {
       $("fAmount").value = ""; $("fNote").value = ""; $("fDate").value = todayIso(); syncDayChips(); $("moreBox").open = false;
       if (mode === "in") { mode = "out"; renderCats(); }
-      $("fAmount").blur();
+      document.querySelector(`#cats [data-cat="${b.dataset.cat}"]`)?.focus({preventScroll:true});
     }
   });
   document.querySelectorAll(".chip[data-day]").forEach(c => c.onclick = () => { $("fDate").value = addDays(todayIso(), +c.dataset.day); syncDayChips(); });
@@ -825,6 +834,7 @@ function bind() {
     else if (b.dataset.rec) { const r = S.recurring.find(x => x.id === b.dataset.rec); if (r) addEntry({amount:r.amount, type:"out", category:"handy", date:dueDate(per, r.day), note:r.name, rid:r.id}); }
     else if (b.dataset.skip) { const key = b.dataset.skip + ":" + per.start; S.skips[key] = true; save(); renderAll();
       toast("Für diese Periode ausgeblendet.", {undo:() => { delete S.skips[key]; save(); renderAll(); }}); }
+    const h = $("todayListTitle"); h.focus({preventScroll:true});
   });
 
   // Listen → Bearbeiten
@@ -885,9 +895,9 @@ function bind() {
     const num = id => { const v = $(id).value.trim(); return v === "" ? 0 : parseAmt(v); };
     const bad = ["cPrice","cReserve","cSaved","cW0","cW1","cW2","cR0","cR1","cR2"].find(id => Number.isNaN(num(id)));
     if (bad) { const f = $(bad); f.setAttribute("aria-invalid", "true"); f.focus(); m.className = "status err"; m.textContent = `«${f.previousElementSibling.textContent}» ist keine Zahl. Beispiel: 350`; return; }
-    C = {name:$("cName").value.trim() || CAR_DEF.name, price:num("cPrice"), reserve:num("cReserve"), saved:r2(num("cSaved") - savedPays()), inBudget:$("cInBudget").checked, start:/^\d{4}-\d{2}$/.test($("cStart").value) ? $("cStart").value : CAR_DEF.start,
+    C = {name:$("cName").value.trim() || CAR_DEF.name, price:num("cPrice"), reserve:num("cReserve"), saved:$("cSaved").value.trim() === $("cSaved").dataset.shown ? C.saved : r2(num("cSaved") - savedPays()), inBudget:$("cInBudget").checked, start:/^\d{4}-\d{2}$/.test($("cStart").value) ? $("cStart").value : CAR_DEF.start,
       wages:[0, 1, 2].map(i => num("cW" + i)), rates:[0, 1, 2].map(i => num("cR" + i))};
-    carStored = true; save(); renderAll(); $("carEdit").open = false; toast("Sparplan gespeichert.");
+    carStored = true; save(); renderAll(); $("carEdit").open = false; $("carEdit").querySelector("summary").focus(); toast("Sparplan gespeichert.");
   };
 
   // Einstellungen
