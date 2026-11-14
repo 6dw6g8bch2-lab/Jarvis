@@ -2,7 +2,7 @@
 /* WKS Wissen – Schulunterlagen verstehen, anwenden, üben.
    Daten: verschlüsselt im Branch «wks-data» des Repos (vault.enc.json, keys.json), auf dem Gerät zwischengespeichert.
    Lernstand (Karten und «Verstanden»): lokal, auf Wunsch über ein geheimes Gist zwischen Geräten abgeglichen. */
-const APP_VERSION = "2.0.0";
+const APP_VERSION = "2.1.0";
 const REPO = "6dw6g8bch2-lab/Lionel", DATA_BRANCH = "wks-data";
 const ISSUE_TITLE = "WKS-Schlüssel", PROG_DESC = "WKS Lernstand (verschlüsselt)", F_PROG = "wks-progress.enc.json";
 const K_CFG = "wks-cfg-v2", K_CACHE = "wks-vault-cache-v2", K_PROG = "wks-progress-v1", K_KEYS = "wks-keys-v2", K_RKEYS = "wks-remote-keys";
@@ -13,7 +13,8 @@ const U_LABEL = ["Noch nicht bewertet", "Noch unklar", "Fast", "Verstanden"];
 /* ---------- Hilfen ---------- */
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const str = v => typeof v === "string" ? v : v == null ? "" : String(v);
+// Nur echter Text (oder Zahlen) wird angezeigt. Ein Markierungsfeld wie beispiel:true ergibt "", nicht "true".
+const str = v => typeof v === "string" ? v : typeof v === "number" && isFinite(v) ? String(v) : "";
 const arr = v => Array.isArray(v) ? v : [];
 const strs = v => arr(v).filter(x => typeof x === "string" && x.trim());
 const iso = d => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
@@ -27,23 +28,29 @@ const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JS
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } };
 const lsDel = k => { try { localStorage.removeItem(k); } catch {} };
 const say = t => { $("live").textContent = ""; setTimeout(() => { $("live").textContent = t; }, 60); };
-let toastT; function toast(t, ms = 3200) { const el = $("toast"); el.textContent = t; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => el.hidden = true, ms); }
+let toastT; function toast(t, ms = 3200) { const el = $("toast"); el.textContent = t; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => el.hidden = true, ms); say(t); }
 const ARROW = `<span class="arr" aria-hidden="true">→</span>`;
 const BACK = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>`;
 
 /* ---------- Zustand ---------- */
 // CFG: ready, kid, token/gistId (nur Lernstand-Abgleich), etag. Das Passwort wird nie gespeichert.
 let CFG = lsGet(K_CFG, {ready:false, kid:"", token:"", gistId:"", etag:{}});
-let V = null, isDemo = true, PR = lsGet(K_PROG, {}), DUE = new Set(), F = [], TH = [], K = [], TE = [];
+let V = null, isDemo = true, PR = lsGet(K_PROG, {}), DPR = {}, DUE = new Set(), F = [], TH = [], K = [], TE = [];
 let view = {tab:"start"}, session = null, learnScope = "faellig", query = "", privKey = null, progKey = null, remoteKeys = null;
-let sync = {state:"", msg:""}, lastDay = today(), lastRefresh = 0, depth = 0;
+let sync = {state:"", msg:""}, lastDay = today(), lastRefresh = 0, depth = 0, showAllOpen = false;
+// Übungen auf der offenen Themenseite: welche Lösungen offen sind und was du selbst als richtig/falsch markiert hast.
+let tasks = {thema:"", open:new Set(), res:{}};
 
 /* ---------- Daten aufbereiten ---------- */
 const LINK_RE = /\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]/g;
 const plain = s => str(s).replace(LINK_RE, (_, a, b) => b || a);
+function uniq(list, base) {
+  const seen = new Set();
+  return list.map((x, i) => { let id = x.id || base(x, i), n = 2; while (seen.has(id)) id = (x.id || base(x, i)) + "-" + n++; seen.add(id); return {...x, id}; });
+}
 function clean(v) {
   const o = v && typeof v === "object" ? v : {};
-  return {
+  const r = {
     erstellt:str(o.erstellt), status:o.status && typeof o.status === "object" ? o.status : null,
     faecher:arr(o.faecher).filter(f => f && str(f.name).trim()).map(f => ({id:str(f.id) || slug(f.name), name:str(f.name), farbe:Math.abs(+f.farbe || 0) % 8, reihenfolge:+f.reihenfolge || 99})),
     themen:arr(o.themen).filter(t => t && str(t.titel).trim()).map(t => ({id:str(t.id), fach:str(t.fach), titel:str(t.titel).trim(), kurz:str(t.kurz), zusammenfassung:str(t.zusammenfassung),
@@ -54,6 +61,11 @@ function clean(v) {
     karten:arr(o.karten).filter(k => k && str(k.frage).trim() && str(k.antwort).trim()).map(k => ({id:str(k.id), fach:str(k.fach), thema:str(k.thema), frage:str(k.frage), antwort:str(k.antwort)})),
     termine:arr(o.termine).filter(t => t && /^\d{4}-\d{2}-\d{2}$/.test(str(t.datum)) && str(t.titel).trim()).map(t => ({id:str(t.id), fach:str(t.fach), titel:str(t.titel), art:str(t.art) || "Termin", datum:str(t.datum)})),
   };
+  r.faecher = uniq(r.faecher, f => slug(f.name));
+  r.themen = uniq(r.themen, t => "t-" + slug(t.titel));
+  r.karten = uniq(r.karten, (k, i) => (k.thema || "k") + "-k" + (i + 1));
+  r.termine = uniq(r.termine, (t, i) => "d-" + t.datum + "-" + (i + 1));
+  return r;
 }
 function setVault(v, demo) {
   V = clean(v); isDemo = !!demo || !V.themen.length;
@@ -65,11 +77,11 @@ function setVault(v, demo) {
 const fachOf = id => F.find(f => f.id === id);
 const themaOf = id => TH.find(t => t.id === id);
 const fcol = f => `var(--c${f ? f.farbe : 0})`;
-const uOf = id => (PR["th:" + id] || {}).u || 0;
+const uOf = id => ((isDemo ? DPR : PR)["th:" + id] || {}).u || 0;
 const fachStats = id => { const th = TH.filter(t => t.fach === id); return {th, done:th.filter(t => uOf(t.id) === 3).length, kc:K.filter(k => k.fach === id).length, due:K.filter(k => k.fach === id && DUE.has(k.id)).length}; };
 
 /* ---------- Text (fett, kursiv, Links auf andere Themen) ---------- */
-const fmt = s => esc(s).replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+const fmt = s => esc(s).replace(/\*\*(?=\S)([^*]+?)\*\*/g, "<strong>$1</strong>").replace(/(^|[^*\w])\*(?=\S)([^*\n]*?\S)\*(?![*\w])/g, "$1<em>$2</em>");
 function inline(s) {
   s = str(s); let out = "", last = 0;
   for (const m of s.matchAll(LINK_RE)) {
@@ -116,14 +128,18 @@ function grade(ok) {
     lsSet(K_PROG, PR); schedulePush();
   }
   if (!ok && first) { session.retried.add(id); session.cards.push(id); }
-  session.i++; session.shown = false; render();
+  session.i++; session.shown = false; render(false);
   setTimeout(() => (document.querySelector("[data-reveal]") || document.querySelector("#page [data-learn]") || $("h-main")).focus({preventScroll:true}), 0);
 }
 function setUnderstood(id, u) {
-  if (isDemo) { toast("Im Beispiel wird nichts gespeichert."); return; }
-  PR["th:" + id] = {u, ts:Date.now()}; lsSet(K_PROG, PR); schedulePush(); render();
-  say(U_LABEL[u] + " gespeichert.");
-  document.querySelector(`[data-u="${u}"]`)?.focus({preventScroll:true});
+  if (isDemo) DPR["th:" + id] = {u, ts:Date.now()};
+  else { PR["th:" + id] = {u, ts:Date.now()}; lsSet(K_PROG, PR); schedulePush(); }
+  rerender();
+  say(U_LABEL[u] + (isDemo ? " gemerkt (im Beispiel nur bis zum Schliessen)." : " gespeichert.") + (u === 1 ? " Lies zuerst «Einfach erklärt» nochmals." : u === 2 ? " Mach als Nächstes die Übungen." : ""));
+  const target = u === 1 ? "erklaert" : u === 2 ? "ueben" : "";
+  const el = target && document.getElementById(target);
+  if (el) { el.scrollIntoView({behavior:matchMedia("(prefers-reduced-motion:reduce)").matches ? "auto" : "smooth"}); const h = el.querySelector("h2"); h.setAttribute("tabindex", "-1"); h.focus({preventScroll:true}); }
+  else document.querySelector(`[data-u="${u}"]`)?.focus({preventScroll:true});
 }
 
 /* ---------- Bausteine ---------- */
@@ -156,7 +172,10 @@ const ghost = `class="pill ghost" style="color:#f4f4f5;border-color:#6a6a72"`;
 function pageStart() {
   const h = new Date().getHours(), hi = h < 11 ? "Guten Morgen" : h < 17 ? "Hallo" : "Guten Abend";
   const next = TE.filter(t => t.datum >= today()).sort((a, b) => a.datum.localeCompare(b.datum))[0];
-  const open = TH.filter(t => uOf(t.id) < 3).sort((a, b) => uOf(b.id) - uOf(a.id) || b.aktualisiert.localeCompare(a.aktualisiert)).slice(0, 4);
+  const rank = u => u === 1 ? 0 : u === 2 ? 1 : 2; // zuerst «Noch unklar», dann «Fast», dann neu
+  const openAll = TH.filter(t => uOf(t.id) < 3).sort((a, b) => rank(uOf(a.id)) - rank(uOf(b.id)) || b.aktualisiert.localeCompare(a.aktualisiert));
+  const open = showAllOpen ? openAll : openAll.slice(0, 4);
+  const recheck = TH.filter(t => uOf(t.id) === 3 && examSoon(t.fach));
   const done = TH.filter(t => uOf(t.id) === 3).length;
   let html = `<section class="hero"><span class="eyebrow">${esc(statusText())}</span><h1 class="display" id="h-main" tabindex="-1">${hi}, Lionel.</h1>
     <p class="lead">${DUE.size ? `Heute warten ${plural(DUE.size, "Karte", "Karten")} auf dich.` : TH.length ? "Heute ist nichts fällig. Nimm dir ein Thema vor, das noch nicht sitzt." : "Sobald deine Unterlagen da sind, geht es los."}</p>
@@ -169,7 +188,8 @@ function pageStart() {
       ${f ? `<div class="row"><button class="pill light" type="button" data-learn="fach:${esc(f.id)}">Für diese Prüfung üben ${ARROW}</button><button ${ghost} type="button" data-fach="${esc(f.id)}">Themen ansehen</button></div>` : ""}</section>`;
   }
   html += `<section class="stats" aria-label="Überblick"><div class="stat"><b class="num">${TH.length}</b><span>Themen</span></div><div class="stat"><b class="num">${done}</b><span>verstanden</span></div><div class="stat"><b class="num">${DUE.size}</b><span>Karten fällig</span></div></section>`;
-  if (open.length) html += `<section class="sec" aria-labelledby="h-open"><div class="sec-head"><h2 class="h2" id="h-open">Als Nächstes verstehen</h2></div><div class="tlist">${open.map(trow).join("")}</div></section>`;
+  if (recheck.length) html += `<section class="sec" aria-labelledby="h-re"><div class="sec-head"><h2 class="h2" id="h-re">Vor der Prüfung nochmals prüfen</h2></div><p class="muted small">Diese Themen hast du schon verstanden. Geh sie kurz durch und mach die Übungen nochmals.</p><div class="tlist">${recheck.map(trow).join("")}</div></section>`;
+  if (open.length) html += `<section class="sec" aria-labelledby="h-open"><div class="sec-head"><h2 class="h2" id="h-open">Als Nächstes verstehen</h2>${openAll.length > 4 ? `<button class="pill ghost sm" type="button" data-allopen aria-expanded="${showAllOpen}">${showAllOpen ? "Weniger zeigen" : `Alle ${openAll.length} offenen Themen`}</button>` : ""}</div><div class="tlist">${open.map(trow).join("")}</div></section>`;
   html += `<section class="sec" aria-labelledby="h-f"><div class="sec-head"><h2 class="h2" id="h-f">Deine Fächer</h2></div><div class="mosaic">${F.map(tile).join("")}</div></section>`;
   return html;
 }
@@ -195,7 +215,14 @@ function pageThema(id) {
   if (t.kernpunkte.length) add("wichtig", "Das Wichtigste", `<ul class="points">${t.kernpunkte.map(p => `<li><span>${inline(p)}</span></li>`).join("")}</ul>`);
   if (t.beispiel) add("beispiel", "Beispiel", `<div class="example-box">${inline(t.beispiel)}</div>`);
   if (t.schritte.length) add("anwenden", "So wendest du es an", `<ol class="steps">${t.schritte.map(s => `<li><span>${inline(s)}</span></li>`).join("")}</ol>`);
-  if (t.aufgaben.length) add("ueben", "Übungen", t.aufgaben.map((a, i) => `<div class="task"><p class="q">${inline(a.frage)}</p>${a.tipp ? `<p class="small muted">Tipp: ${inline(a.tipp)}</p>` : ""}<button class="pill ghost sm" type="button" data-sol="${i}" aria-expanded="false" aria-controls="sol-${i}">Lösung zeigen</button><div class="sol" id="sol-${i}" hidden>${inline(a.loesung || "Keine Lösung hinterlegt.")}</div></div>`).join(""));
+  if (tasks.thema !== t.id) tasks = {thema:t.id, open:new Set(), res:{}};
+  if (t.aufgaben.length) {
+    const n = t.aufgaben.length, right = Object.values(tasks.res).filter(x => x === 1).length, rated = Object.keys(tasks.res).length;
+    add("ueben", "Übungen", `<p class="muted small">Überleg dir zuerst eine Antwort, dann deckst du die Lösung auf und markierst ehrlich, ob du richtig lagst.</p>` + t.aufgaben.map((a, i) => { const o = tasks.open.has(i), r = tasks.res[i];
+      return `<div class="task${r === 1 ? " ok" : r === 0 ? " bad" : ""}"><p class="q"><span class="tn">${i + 1}</span>${inline(a.frage)}</p>${a.tipp ? `<p class="small muted">Tipp: ${inline(a.tipp)}</p>` : ""}<button class="pill ghost sm" type="button" data-sol="${i}" aria-expanded="${o}" aria-controls="sol-${i}">${o ? "Lösung verbergen" : "Lösung zeigen"}</button>
+        <div class="sol" id="sol-${i}" ${o ? "" : "hidden"}><div>${inline(a.loesung || "Keine Lösung hinterlegt.")}</div><div class="selfcheck" role="group" aria-label="Hattest du Aufgabe ${i + 1} richtig?"><button type="button" class="sc yes" data-task="${i}" data-r="1" aria-pressed="${r === 1}">Hatte ich richtig</button><button type="button" class="sc no" data-task="${i}" data-r="0" aria-pressed="${r === 0}">Lag daneben</button></div></div></div>`; }).join("")
+      + (rated === n ? `<div class="note ${right === n ? "" : "warn"}" id="taskSum" tabindex="-1"><b>${right} von ${n} richtig.</b><p>${right === n ? (uOf(t.id) === 3 ? "Sitzt." : "Alles richtig. Dann kannst du das Thema unten als «Verstanden» markieren.") : "Lies bei den falschen Aufgaben «Einfach erklärt» und «Typische Fehler» nochmals, dann versuch es erneut."}</p>${right === n && uOf(t.id) !== 3 ? `<button class="pill sm" type="button" data-u="3" data-uid="${esc(t.id)}">Als verstanden markieren</button>` : ""}</div>` : ""));
+  }
   if (t.fehler.length) add("fehler", "Typische Fehler", `<ul class="mistakes">${t.fehler.map(x => `<li>${inline(x)}</li>`).join("")}</ul>`);
   if (t.merksatz) add("merksatz", "Merksatz", `<div class="motto glow" style="--fc:${fcol(f)}">${inline(t.merksatz)}</div>`);
   if (t.begriffe.length) add("begriffe", "Begriffe", `<dl class="terms">${t.begriffe.map(b => `<div><dt>${esc(b.begriff)}</dt><dd>${inline(b.erklaerung)}</dd></div>`).join("")}</dl>`);
@@ -208,6 +235,7 @@ function pageThema(id) {
     ${blocks.map((b, i) => `<section class="block" id="${b.key}" aria-labelledby="h-${b.key}" style="--fc:${fcol(f)}"><div class="block-h"><span class="n" aria-hidden="true">${i + 1}</span><h2 id="h-${b.key}">${esc(b.title)}</h2></div>${b.body}</section>`).join("")}
     <section class="block card check" id="check" aria-labelledby="h-check"><h2 id="h-check" class="h2">Hast du es verstanden?</h2><p class="muted">Sei ehrlich mit dir. Was noch unklar ist, zeigt dir die Startseite als Nächstes.</p>
       <div class="seg" role="group" aria-label="Wie gut verstehst du das Thema?">${[1, 2, 3].map(x => `<button type="button" data-u="${x}" data-uid="${esc(t.id)}" aria-pressed="${u === x}">${U_LABEL[x]}<small>${["", "Nochmals lesen", "Übungen machen", "Sitzt"][x]}</small></button>`).join("")}</div>
+      ${u === 1 ? `<p class="small">Tipp: Lies «Einfach erklärt» und das Beispiel nochmals langsam durch. Bleibt etwas unklar, frag deine Lehrperson oder schreib Claude, was du nicht verstehst.</p>` : u === 2 ? `<p class="small">Tipp: Mach die Übungen, bis alle richtig sind.</p>` : ""}
       ${u && u < 3 && ks.length ? `<button class="pill sm" type="button" data-learn="thema:${esc(t.id)}">Mit den Karten festigen ${ARROW}</button>` : ""}</section>`;
 }
 function pageLearn() {
@@ -236,7 +264,7 @@ function pageLearn() {
   const k = K.find(x => x.id === session.cards[session.i]); if (!k) { session.i++; return pageLearn(); }
   const f = fachOf(k.fach), th = themaOf(k.thema);
   return html + `<div class="progress" aria-hidden="true"><div style="width:${session.i / session.cards.length * 100}%"></div></div><p class="small muted num">Karte ${session.i + 1} von ${session.cards.length}</p>
-    <section class="flash glow" aria-label="Karteikarte" style="--fc:${fcol(f)}"><div class="row">${f ? `<span class="chip"><span class="dot"></span>${esc(f.name)}</span>` : ""}${th ? `<span class="small muted">${esc(th.titel)}</span>` : ""}</div>
+    <section class="flash glow" aria-label="Karteikarte" style="--fc:${fcol(f)}"><div class="row">${f ? `<span class="chip"><span class="dot"></span>${esc(f.name)}</span>` : ""}${th ? `<span class="small ttl">${esc(th.titel)}</span>` : ""}</div>
       <p class="q" id="cardQ">${esc(k.frage)}</p>
       ${session.shown ? `<div class="a" id="cardA" tabindex="-1">${esc(k.antwort)}</div><div class="acts"><button class="pill no" type="button" data-grade="0" aria-keyshortcuts="1">Nicht gewusst</button><button class="pill yes" type="button" data-grade="1" aria-keyshortcuts="2">Gewusst</button></div>`
       : `<div class="acts one"><button class="pill" type="button" data-reveal aria-keyshortcuts="Space" aria-describedby="cardQ">Antwort zeigen</button></div>`}
@@ -332,8 +360,9 @@ function bindSettings() {
 }
 
 /* ---------- Navigation ---------- */
-function render() {
+function render(anim = false) {
   computeDue();
+  $("page").classList.toggle("anim", anim);
   const v = view, top = v.tab.startsWith("fach:") || v.tab.startsWith("thema:") ? "faecher" : v.tab;
   document.querySelectorAll("[data-tab]").forEach(b => { if (b.classList.contains("brand")) return; b.dataset.tab === top ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"); });
   $("page").innerHTML = v.tab === "start" ? pageStart() : v.tab === "faecher" ? pageFaecher() : v.tab.startsWith("fach:") ? pageFach(v.tab.slice(5)) : v.tab.startsWith("thema:") ? pageThema(v.tab.slice(6))
@@ -341,13 +370,20 @@ function render() {
   if (v.tab === "search") { $("q").addEventListener("input", e => { query = e.target.value; searchResults(); }); searchResults(); }
   if (v.tab === "settings") bindSettings();
 }
+// Neu zeichnen, ohne dass offene Lösungen, Fokus oder Scrollposition verloren gehen.
+function rerender() {
+  const y = window.scrollY, a = document.activeElement, sel = a && a !== document.body && (a.id ? "#" + CSS.escape(a.id) : [...a.attributes].filter(x => x.name.startsWith("data-")).map(x => `[${x.name}="${CSS.escape(x.value)}"]`).join(""));
+  render(); window.scrollTo(0, y);
+  if (sel) { try { document.querySelector(sel)?.focus({preventScroll:true}); } catch {} }
+}
 function go(v, {focus = true} = {}) {
-  view = v; if (v.tab !== "learn" && session && session.i >= session.cards.length) session = null;
-  try { history.pushState({v, depth:++depth}, ""); } catch {}
-  render(); window.scrollTo(0, 0);
+  const same = v.tab === view.tab;
+  if (!same) { const from = view.tab; view = v; try { history.pushState({v, depth:++depth, from}, ""); } catch {} }
+  if (v.tab !== "learn" && session && session.i >= session.cards.length) session = null;
+  render(!same); window.scrollTo(0, 0);
   if (focus) setTimeout(() => (v.tab === "search" ? $("q") : document.querySelector("[data-reveal]") || $("h-main") || $("page")).focus({preventScroll:true}), 0);
 }
-window.addEventListener("popstate", e => { const s = e.state; view = s && s.v ? s.v : {tab:"start"}; depth = s ? s.depth || 0 : 0; render(); window.scrollTo(0, 0); setTimeout(() => ($("h-main") || $("page")).focus({preventScroll:true}), 0); });
+window.addEventListener("popstate", e => { const s = e.state; view = s && s.v ? s.v : {tab:"start"}; depth = s ? s.depth || 0 : 0; render(true); window.scrollTo(0, 0); setTimeout(() => ($("h-main") || $("page")).focus({preventScroll:true}), 0); });
 
 document.addEventListener("click", e => {
   const a = e.target.closest("a[data-thema]"); if (a) { e.preventDefault(); return go({tab:"thema:" + a.dataset.thema}); }
@@ -357,13 +393,15 @@ document.addEventListener("click", e => {
   if (b.dataset.tab) return go({tab:b.dataset.tab});
   if (b.dataset.fach) return go({tab:"fach:" + b.dataset.fach});
   if (b.dataset.thema) return go({tab:"thema:" + b.dataset.thema});
-  if (b.dataset.back !== undefined) { if (depth > 0) history.back(); else go({tab:b.dataset.back || "start"}); return; }
+  if (b.dataset.back !== undefined) { const to = b.dataset.back || "start"; if (depth > 0 && history.state && history.state.from === to) history.back(); else go({tab:to}); return; }
+  if (b.hasAttribute("data-allopen")) { showAllOpen = !showAllOpen; rerender(); return; }
+  if (b.dataset.task !== undefined) { const i = +b.dataset.task; tasks.res[i] = +b.dataset.r; rerender(); if (Object.keys(tasks.res).length === themaOf(tasks.thema)?.aufgaben.length) { say($("taskSum")?.innerText || ""); } return; }
   if (b.dataset.learn) return startSession(b.dataset.learn);
   if (b.dataset.scope) { learnScope = b.dataset.scope; session = null; render(); document.querySelector(`[data-scope="${CSS.escape(learnScope)}"]`)?.focus(); return; }
   if (b.hasAttribute("data-endsession")) { session = null; render(); $("h-main")?.focus(); return; }
-  if (b.hasAttribute("data-reveal")) { session.shown = true; render(); const k = K.find(x => x.id === session.cards[session.i]); say("Antwort: " + (k ? k.antwort : "")); $("cardA")?.focus({preventScroll:true}); return; }
+  if (b.hasAttribute("data-reveal")) { session.shown = true; render(); $("cardA")?.focus({preventScroll:true}); return; }
   if (b.dataset.grade) return grade(b.dataset.grade === "1");
-  if (b.dataset.sol !== undefined) { const s = $("sol-" + b.dataset.sol), open = s.hidden; s.hidden = !open; b.setAttribute("aria-expanded", String(open)); b.textContent = open ? "Lösung verbergen" : "Lösung zeigen"; return; }
+  if (b.dataset.sol !== undefined) { const i = +b.dataset.sol, s = $("sol-" + i), open = s.hidden; s.hidden = !open; open ? tasks.open.add(i) : tasks.open.delete(i); b.setAttribute("aria-expanded", String(open)); b.textContent = open ? "Lösung verbergen" : "Lösung zeigen"; return; }
   if (b.dataset.u) return setUnderstood(b.dataset.uid, +b.dataset.u);
 });
 document.addEventListener("keydown", e => {
@@ -407,7 +445,8 @@ async function refresh(manual = false) {
     sync = {state:"", msg:""}; lsSet(K_CFG, CFG);
     if (manual && CFG.ready) toast(isDemo ? "Geladen. Noch keine Unterlagen verarbeitet." : "Auf dem neuesten Stand.");
   } catch (e) { sync = {state:"err", msg:e.message || "Laden hat nicht geklappt."}; }
-  if (!(view.tab === "learn" && session) && view.tab !== "search") render();
+  if (view.tab === "settings" && document.activeElement && document.activeElement.matches("input")) return;
+  if (!(view.tab === "learn" && session) && view.tab !== "search") rerender();
 }
 async function unlockAndStore(keys, pass) {
   const priv = await WC.unlockKeys(keys, pass), prog = await WC.progressKey(pass, keys.kid);
@@ -448,9 +487,9 @@ function schedulePush(ms = 3000) { if (!CFG.token || !progKey || isDemo) return;
   const cache = CFG.ready ? lsGet(K_CACHE, null) : null;
   setVault(cache || DEMO_VAULT, !cache);
   try { const s = history.state; if (s && s.v && s.v.tab) { view = s.v; depth = s.depth || 0; } else history.replaceState({v:view, depth:0}, ""); } catch {}
-  render();
+  render(true);
   refresh(true);
-  document.addEventListener("visibilitychange", () => { if (document.hidden) return; if (today() !== lastDay) { lastDay = today(); render(); } refresh(); });
-  setInterval(() => { if (today() !== lastDay) { lastDay = today(); render(); } }, 60000);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) return; if (today() !== lastDay) { lastDay = today(); rerender(); } refresh(); });
+  setInterval(() => { if (today() !== lastDay) { lastDay = today(); rerender(); } }, 60000);
   if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
 })();
